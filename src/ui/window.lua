@@ -8,21 +8,31 @@ function UI.Log(msg)
     if not UI.LogScroll then return end
     
     UI.LogCounter = UI.LogCounter + 1
-    local lbl = Instance.new("TextLabel", UI.LogScroll)
-    lbl.Size = UDim2.new(1, 0, 0, 16)
+    local lbl = Instance.new("TextLabel")
+    lbl.Name = "LogMsg_" .. UI.LogCounter
+    lbl.Size = UDim2.new(1, -10, 0, 16)
     lbl.BackgroundTransparency = 1
     lbl.Text = " " .. tostring(msg)
     lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
     lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextYAlignment = Enum.TextYAlignment.Top
     lbl.TextSize = 12
     lbl.Font = Enum.Font.Code
     lbl.TextWrapped = true
     lbl.LayoutOrder = UI.LogCounter
+    lbl.Parent = UI.LogScroll
     
-    if UI.LogLayout then
-        UI.LogScroll.CanvasSize = UDim2.new(0, 0, 0, UI.LogLayout.AbsoluteContentSize.Y)
-        UI.LogScroll.CanvasPosition = Vector2.new(0, UI.LogLayout.AbsoluteContentSize.Y + 100)
-    end
+    -- Auto adjust size based on text
+    local textBounds = game:GetService("TextService"):GetTextSize(lbl.Text, 12, Enum.Font.Code, Vector2.new(UI.LogScroll.AbsoluteSize.X - 10, 10000))
+    lbl.Size = UDim2.new(1, -10, 0, textBounds.Y + 4)
+
+    task.spawn(function()
+        task.wait(0.05)
+        if UI.LogLayout and UI.LogScroll then
+            UI.LogScroll.CanvasSize = UDim2.new(0, 0, 0, UI.LogLayout.AbsoluteContentSize.Y + 20)
+            UI.LogScroll.CanvasPosition = Vector2.new(0, UI.LogLayout.AbsoluteContentSize.Y)
+        end
+    end)
 end
 
 function UI.Init()
@@ -30,6 +40,8 @@ function UI.Init()
     if player.PlayerGui:FindFirstChild("PS99_AutoRankHub") then
         player.PlayerGui.PS99_AutoRankHub:Destroy()
     end
+    
+    UI.LogCounter = 0
     
     local gui = Instance.new("ScreenGui", player.PlayerGui)
     gui.Name = "PS99_AutoRankHub"

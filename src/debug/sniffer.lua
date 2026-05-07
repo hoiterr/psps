@@ -11,28 +11,40 @@ end
 function Sniffer.DumpSaveData()
     cout("======== [PS99 SAVE UNPACKED] ========")
     
-    local gc = getgc and getgc(true) or {}
     local data = nil
     
-    for _, v in ipairs(gc) do
-        if type(v) == "table" and rawget(v, "Save") then
-            if type(v.Save) == "table" and rawget(v.Save, "Get") then
-                local success, res = pcall(function() return v.Save.Get() end)
-                if success and type(res) == "table" then
-                    data = res
-                    break
+    -- Attempt 1: Direct Library require (Most common standard in Pet Sim)
+    local success, Library = pcall(function() return require(game:GetService("ReplicatedStorage").Library) end)
+    if success and type(Library) == "table" and Library.Save and Library.Save.Get then
+        local suc, res = pcall(function() return Library.Save.Get() end)
+        if suc and res and type(res) == "table" then
+            data = res
+        end
+    end
+    
+    -- Attempt 2: GC (Garbage Collection) Scan
+    if not data then
+        local gc = getgc and getgc(true) or {}
+        for _, v in ipairs(gc) do
+            if type(v) == "table" and rawget(v, "Save") then
+                if type(v.Save) == "table" and rawget(v.Save, "Get") then
+                    local suc, res = pcall(function() return v.Save.Get() end)
+                    if suc and type(res) == "table" then
+                        data = res
+                        break
+                    end
                 end
             end
-        end
-        -- Fallbacks
-        if type(v) == "table" and rawget(v, "Goals") and rawget(v, "Rank") then
-            data = v
-            break
+            -- Fallbacks
+            if type(v) == "table" and rawget(v, "Goals") and rawget(v, "Rank") then
+                data = v
+                break
+            end
         end
     end
 
     if not data then
-        cout("[Sniffer] Could not find SaveData in GC!")
+        cout("[Sniffer] Could not find SaveData via Library or GC!")
         return
     end
 
@@ -41,7 +53,9 @@ function Sniffer.DumpSaveData()
     cout("MaxZone: " .. tostring(data.MaxZone))
     cout("--- ACTIVE GOALS ---")
     local goals = data.Goals or {}
+    local goalCount = 0
     for id, goal in pairs(goals) do
+        goalCount = goalCount + 1
         cout(string.format("ID: %s | Type: %s | Progress: %s/%s | Stars: %s", 
             tostring(id), 
             tostring(goal.Type), 
@@ -49,6 +63,9 @@ function Sniffer.DumpSaveData()
             tostring(goal.Amount or goal.Goal or "?"), 
             tostring(goal.Stars or "?")
         ))
+    end
+    if goalCount == 0 then
+        cout("No active goals found in SaveData.")
     end
     cout("======================================")
 end
