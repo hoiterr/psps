@@ -33,8 +33,10 @@ local function isStatsTable(t)
 end
 
 function Sniffer.ExtractMemory()
+    local bestResult = nil
+
     cout("======== [MEMORY SCAN] ========")
-    
+
     -- Method 1: Direct require (PS99 specific)
     cout("Trying: require(Library.Client.Save).Get()...")
     local success, saveModule = pcall(function()
@@ -44,12 +46,23 @@ function Sniffer.ExtractMemory()
         local ok, saveData = pcall(function() return saveModule.Get() end)
         if ok and type(saveData) == "table" then
             cout("SUCCESS - got save data via direct require!")
-            local parsed = SaveData.SetSource(saveData)
-            printLines(ValueExtractor.FormatSummary(parsed))
-            return parsed
+            -- Try ValueExtractor directly first for diagnostics
+            if ValueExtractor then
+                local result = ValueExtractor.Normalize(saveData)
+                bestResult = result
+                printLines(ValueExtractor.FormatSummary(result))
+            else
+                cout("ValueExtractor not available, dumping raw keys:")
+                for k, v in pairs(saveData) do
+                    cout("  [" .. tostring(k) .. "] = " .. type(v))
+                end
+            end
+            -- Also cache via SaveData
+            SaveData.SetSource(saveData)
+            return bestResult
         end
     end
-    
+
     -- Method 2: GC scan
     cout("Trying: getgc() scan...")
     local candidates = {}
@@ -61,7 +74,7 @@ function Sniffer.ExtractMemory()
         end
     end
     cout("Found " .. #candidates .. " candidate tables in GC")
-    
+
     -- Also look for Save module with Get() function
     for _, obj in pairs(getgc()) do
         if type(obj) == "table" then
@@ -77,33 +90,34 @@ function Sniffer.ExtractMemory()
             end
         end
     end
-    
+
     if #candidates == 0 then
         cout("No candidates found. Save data might not be loaded yet.")
         return nil
     end
-    
-    local bestResult = nil
+
     local bestScore = -1
-    
+
     for i, c in ipairs(candidates) do
         cout("--- Candidate " .. i .. " ---")
         local parsed = SaveData.SetSource(c)
-        local score = #(parsed.goals or {}) * 10
-        if parsed.rank and parsed.rank > 1 then score = score + 5 end
-        if parsed.stars and parsed.stars >= 0 then score = score + 3 end
-        
-        if score > bestScore then
-            bestScore = score
-            bestResult = parsed
+        if parsed then
+            local score = #(parsed.goals or {}) * 10
+            if parsed.rank and parsed.rank > 1 then score = score + 5 end
+            if parsed.stars and parsed.stars >= 0 then score = score + 3 end
+
+            if score > bestScore then
+                bestScore = score
+                bestResult = parsed
+            end
         end
     end
-    
+
     if bestResult then
         cout("======== [BEST RESULT] ========")
         printLines(ValueExtractor.FormatSummary(bestResult))
     end
-    
+
     return bestResult
 end
 
@@ -111,35 +125,17 @@ function Sniffer.FullScan()
     return Sniffer.ExtractMemory()
 end
 
--- Keep the original interface
 function Sniffer.ParseSource(source, label)
     cout("======== [VALUE PARSE] ========")
     cout("Source: " .. tostring(label or "custom"))
     local parsed = SaveData.SetSource(source)
-    printLines(ValueExtractor.FormatSummary(parsed))
+    if parsed and ValueExtractor then
+        printLines(ValueExtractor.FormatSummary(parsed))
+    else
+        cout("Parsing failed or ValueExtractor not available")
+    end
     return parsed
 end
-
-if success and type(saveModule) == "table" then
-        local ok, saveData = pcall(function() return saveModule.Get() end)
-        if ok and type(saveData) == "table" then
-            cout("SUCCESS - got save data via direct require!")
-            -- Try ValueExtractor directly first for diagnostics
-            local ValueExtractor = shared._PS99.Core.ValueExtractor
-            if ValueExtractor then
-                local result = ValueExtractor.Normalize(saveData)
-                printLines(ValueExtractor.FormatSummary(result))
-            else
-                cout("ValueExtractor not available, dumping raw keys:")
-                for k, v in pairs(saveData) do
-                    cout("  [" .. tostring(k) .. "] = " .. type(v))
-                end
-            end
-            -- Also cache via SaveData
-            SaveData.SetSource(saveData)
-            return result
-        end
-    end
 
 function Sniffer.DumpCurrentData()
     return Sniffer.ParseSource(SaveData.GetRawSource() or {}, "current")
