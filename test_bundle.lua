@@ -1,5 +1,5 @@
 repeat task.wait() until game:IsLoaded()
-shared._PS99 = shared._PS99 or { Core = {}, Features = {}, UI = {}, Debug = {} }
+shared._PS99 = shared._PS99 or { Core = {}, Features = {}, UI = {}, Debug = {}, Fixtures = {} }
 
 do
 local Utils = {}
@@ -10,17 +10,11 @@ function Utils.FormatNumber(n)
     return n:reverse():gsub("%d%d%d", "%1,"):reverse():gsub("^,", "")
 end
 
-function Utils.GetPlayer()
-    return game:GetService("Players").LocalPlayer
-end
-
 function Utils.DeepCopy(original)
+    if type(original) ~= "table" then return original end
     local copy = {}
     for k, v in pairs(original) do
-        if type(v) == "table" then
-            v = Utils.DeepCopy(v)
-        end
-        copy[k] = v
+        copy[k] = Utils.DeepCopy(v)
     end
     return copy
 end
@@ -31,129 +25,290 @@ end
 end
 
 do
-local Network = {}
+local ValueExtractor = {}
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local NetworkCache = nil
+local function isTable(value)
+    return type(value) == "table"
+end
 
-function Network.GetModule()
-    if NetworkCache then return NetworkCache end
-    for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
-        if v:IsA("ModuleScript") and v.Name == "Network" then
-            local success, m = pcall(require, v)
-            if success and type(m) == "table" and (m.Fire or m.Invoke) then
-                NetworkCache = m
-                return m
-            end
-        end
+local function clone(value, seen)
+    if not isTable(value) then return value end
+    seen = seen or {}
+    if seen[value] then return seen[value] end
+
+    local copy = {}
+    seen[value] = copy
+    for k, v in pairs(value) do
+        copy[clone(k, seen)] = clone(v, seen)
+    end
+    return copy
+end
+
+local function firstNumber(...)
+    for _, value in ipairs({...}) do
+        local n = tonumber(value)
+        if n then return n end
     end
     return nil
 end
 
-local NetworkFolder = ReplicatedStorage:WaitForChild("Network", 5)
+local function firstValue(...)
+    for _, value in ipairs({...}) do
+        if value ~= nil then return value end
+    end
+    return nil
+end
 
--- A robust function to fire any remote safely
-function Network.Fire(remoteName, ...)
-    local m = Network.GetModule()
-    if m and m.Fire then
-        return m.Fire(remoteName, ...)
-    elseif m and m.Invoke then
-        return m.Invoke(remoteName, ...)
+local function getPath(root, path)
+    local current = root
+    for _, key in ipairs(path) do
+        if not isTable(current) then return nil end
+        current = current[key]
+        if current == nil then return nil end
+    end
+    return current
+end
+
+local function tableLooksLikeGoals(value)
+    if not isTable(value) then return false end
+
+    local count = 0
+    for _, goal in pairs(value) do
+        if isTable(goal) then
+            local hasType = goal.Type or goal.type or goal.Name or goal.name or goal.GoalType or goal.goalType
+            local hasTarget = goal.Amount or goal.amount or goal.Target or goal.target or goal.Required or goal.required
+            local hasProgress = goal.Progress or goal.progress or goal.Current or goal.current or goal.Count or goal.count
+            if hasType or hasTarget or hasProgress then
+                return true
+            end
+        end
+        count = count + 1
+        if count > 30 then break end
     end
 
-    if not NetworkFolder then return false end
-    
-    local remote = NetworkFolder:FindFirstChild(remoteName)
-    if not remote then 
-        return false 
-    end
-    
-    if remote:IsA("RemoteEvent") then
-        remote:FireServer(...)
-        return true
-    elseif remote:IsA("RemoteFunction") then
-        local success, result = pcall(function(...) 
-            return remote:InvokeServer(...) 
-        end, ...)
-        
-        if success then
-            return result
-        else
-            warn("[Network] Error invoking " .. remoteName .. ":", result)
-            return nil
+    return false
+end
+
+local function findGoals(root, depth, seen)
+    if not isTable(root) or depth > 5 then return nil end
+    seen = seen or {}
+    if seen[root] then return nil end
+    seen[root] = true
+
+    local direct = root.Goals or root.goals or root.ActiveGoals or root.activeGoals or root.Quests or root.quests
+    if tableLooksLikeGoals(direct) then return direct end
+
+    for _, child in pairs(root) do
+        if isTable(child) then
+            local found = findGoals(child, depth + 1, seen)
+            if found then return found end
         end
     end
-    return false
+
+    return nil
+end
+
+local function normalizeGoal(id, goal)
+    if not isTable(goal) then
+        return {
+            id = tostring(id),
+            type = "Unknown",
+            progress = 0,
+            amount = 1,
+            raw = goal,
+        }
+    end
+
+    local amount = firstNumber(goal.Amount, goal.amount, goal.Target, goal.target, goal.Required, goal.required, goal.Needed, goal.needed)
+    local progress = firstNumber(goal.Progress, goal.progress, goal.Current, goal.current, goal.Count, goal.count, goal.Done, goal.done)
+
+    return {
+        id = tostring(firstValue(goal.Id, goal.id, goal.UID, goal.uid, id)),
+        type = tostring(firstValue(goal.Type, goal.type, goal.GoalType, goal.goalType, goal.Name, goal.name, "Unknown")),
+        progress = progress or 0,
+        amount = amount or 1,
+        complete = goal.Complete == true or goal.complete == true or ((progress or 0) >= (amount or 1)),
+        raw = clone(goal),
+    }
+end
+
+function ValueExtractor.Normalize(source)
+    local diagnostics = {}
+
+    if not isTable(source) then
+        return {
+            ok = false,
+            diagnostics = {"Source is not a table."},
+            rank = 1,
+            stars = 0,
+            maxZone = nil,
+            goals = {},
+            raw = source,
+        }
+    end
+
+    local profile = source
+    for _, path in ipairs({
+        {"Save"},
+        {"Data"},
+        {"PlayerData"},
+        {"Profile", "Data"},
+        {"LocalPlayer", "Data"},
+    }) do
+        local candidate = getPath(source, path)
+        if isTable(candidate) then
+            profile = candidate
+            table.insert(diagnostics, "Using nested data path: " .. table.concat(path, "."))
+            break
+        end
+    end
+
+    local goalsTable = findGoals(profile, 0) or {}
+    if next(goalsTable) == nil then
+        table.insert(diagnostics, "No goal-like table found.")
+    end
+
+    local goals = {}
+    for id, goal in pairs(goalsTable) do
+        table.insert(goals, normalizeGoal(id, goal))
+    end
+
+    table.sort(goals, function(a, b)
+        return tostring(a.id) < tostring(b.id)
+    end)
+
+    local rank = firstNumber(profile.Rank, profile.rank, profile.CurrentRank, profile.currentRank, getPath(profile, {"Stats", "Rank"})) or 1
+    local stars = firstNumber(profile.Stars, profile.stars, profile.RankStars, profile.rankStars, getPath(profile, {"Stats", "Stars"})) or 0
+    local maxZone = firstNumber(profile.MaxZone, profile.maxZone, profile.BestZone, profile.bestZone, profile.Zone, profile.zone, getPath(profile, {"Stats", "MaxZone"}))
+
+    return {
+        ok = true,
+        diagnostics = diagnostics,
+        rank = rank,
+        stars = stars,
+        maxZone = maxZone,
+        goals = goals,
+        raw = clone(source),
+    }
+end
+
+function ValueExtractor.FormatSummary(parsed)
+    local lines = {}
+    table.insert(lines, "Rank: " .. tostring(parsed.rank))
+    table.insert(lines, "Stars: " .. tostring(parsed.stars))
+    table.insert(lines, "MaxZone: " .. tostring(parsed.maxZone or "unknown"))
+    table.insert(lines, "Goals: " .. tostring(#(parsed.goals or {})))
+
+    for _, note in ipairs(parsed.diagnostics or {}) do
+        table.insert(lines, "Note: " .. tostring(note))
+    end
+
+    for _, goal in ipairs(parsed.goals or {}) do
+        table.insert(lines, string.format(
+            "Goal %s | %s | %s/%s | %s",
+            tostring(goal.id),
+            tostring(goal.type),
+            tostring(goal.progress),
+            tostring(goal.amount),
+            goal.complete and "complete" or "active"
+        ))
+    end
+
+    return table.concat(lines, "\n")
 end
 
 
 
-    shared._PS99.Core.Network = Network
+    shared._PS99.Core.ValueExtractor = ValueExtractor
+end
+
+do
+local SampleSaveData = {
+    Profile = {
+        Data = {
+            Rank = 8,
+            Stars = 17,
+            MaxZone = 42,
+            Goals = {
+                daily_1 = {
+                    Type = "BreakBreakables",
+                    Progress = 37,
+                    Amount = 100,
+                },
+                daily_2 = {
+                    Type = "HatchPets",
+                    Progress = 12,
+                    Amount = 25,
+                },
+                daily_3 = {
+                    Type = "CollectDiamonds",
+                    Progress = 5000,
+                    Amount = 5000,
+                    Complete = true,
+                },
+            },
+        },
+    },
+}
+
+
+
+    shared._PS99.Fixtures.SampleSaveData = SampleSaveData
 end
 
 do
 local SaveData = {}
 
-local SaveModuleCache = nil
+local ValueExtractor = shared._PS99.Core.ValueExtractor
 
-local function GetSaveData()
-    if SaveModuleCache then
-        local suc, res = pcall(function() return SaveModuleCache.Get() end)
-        if suc and res and type(res) == "table" then return res end
-    end
+local currentSource = nil
+local currentParsed = nil
 
-    for _, v in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
-        if v:IsA("ModuleScript") and v.Name == "Save" then
-            pcall(function()
-                local m = require(v)
-                if type(m) == "table" and m.Get then
-                    local suc, res = pcall(function() return m.Get() end)
-                    if suc and type(res) == "table" and res.Goals then
-                        SaveModuleCache = m
-                        return res
-                    end
-                end
-            end)
-        end
-        if SaveModuleCache then
-            local suc, res = pcall(function() return SaveModuleCache.Get() end)
-            if suc and res and type(res) == "table" then return res end
-        end
-    end
-    
-    local gc = getgc and getgc(true) or {}
-    for _, v in ipairs(gc) do
-        if type(v) == "table" and rawget(v, "Goals") and rawget(v, "Rank") then
-            return v
-        end
-    end
-    
-    return nil
+local function parseSource(source)
+    currentSource = source
+    currentParsed = ValueExtractor.Normalize(source)
+    return currentParsed
 end
 
--- Get current goals (quests)
-function SaveData.GetGoals()
-    local data = GetSaveData()
-    if data and data.Goals then
-        return data.Goals
+function SaveData.SetSource(source)
+    return parseSource(source)
+end
+
+function SaveData.UseSample()
+    if shared._PS99.Fixtures and shared._PS99.Fixtures.SampleSaveData then
+        return parseSource(shared._PS99.Fixtures.SampleSaveData)
     end
-    return {}
+
+    return parseSource({})
+end
+
+function SaveData.GetParsed()
+    if currentParsed then return currentParsed end
+    return SaveData.UseSample()
+end
+
+function SaveData.GetGoals()
+    return SaveData.GetParsed().goals or {}
 end
 
 function SaveData.GetRank()
-    local data = GetSaveData()
-    if data and data.Rank then
-        return data.Rank
-    end
-    return 1
+    return SaveData.GetParsed().rank or 1
 end
 
 function SaveData.GetStars()
-    local data = GetSaveData()
-    if data and data.Stars then
-        return data.Stars
-    end
-    return 0
+    return SaveData.GetParsed().stars or 0
+end
+
+function SaveData.GetMaxZone()
+    return SaveData.GetParsed().maxZone
+end
+
+function SaveData.GetSummary()
+    return ValueExtractor.FormatSummary(SaveData.GetParsed())
+end
+
+function SaveData.GetRawSource()
+    return currentSource
 end
 
 
@@ -164,6 +319,9 @@ end
 do
 local Sniffer = {}
 
+local SaveData = shared._PS99.Core.SaveData
+local ValueExtractor = shared._PS99.Core.ValueExtractor
+
 local function cout(msg)
     if shared._PS99 and shared._PS99.UI and shared._PS99.UI.Log then
         shared._PS99.UI.Log(msg)
@@ -172,197 +330,46 @@ local function cout(msg)
     end
 end
 
-function Sniffer.DumpSaveData()
-    cout("======== [PS99 SAVE UNPACKED] ========")
-    
-    local data = nil
-    
-    local foundSave = false
-    -- Attempt 1: Dynamic Module Search
-    for _, v in pairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
-        if v:IsA("ModuleScript") and v.Name == "Save" then
-            pcall(function()
-                local m = require(v)
-                if type(m) == "table" and m.Get then
-                    local suc, res = pcall(function() return m.Get() end)
-                    if suc and type(res) == "table" and res.Goals then
-                        data = res
-                        foundSave = true
-                        cout("-> Found true Save module at: " .. v:GetFullName())
-                    end
-                end
-            end)
-        end
-        if foundSave then break end
+local function printLines(text)
+    for line in tostring(text):gmatch("([^\n]+)") do
+        cout(line)
     end
-    
-    -- Attempt 2: GC (Garbage Collection) Scan
-    if not data then
-        local gc = getgc and getgc(true) or {}
-        for _, v in ipairs(gc) do
-            if type(v) == "table" and rawget(v, "Save") then
-                if type(v.Save) == "table" and rawget(v.Save, "Get") then
-                    local suc, res = pcall(function() return v.Save.Get() end)
-                    if suc and type(res) == "table" then
-                        data = res
-                        break
-                    end
-                end
-            end
-            -- Fallbacks
-            if type(v) == "table" and rawget(v, "Goals") and rawget(v, "uid") then
-                data = v
-                break
-            end
-        end
+end
+
+function Sniffer.ParseSource(source, label)
+    cout("======== [VALUE PARSE] ========")
+    cout("Source: " .. tostring(label or "custom table"))
+
+    local parsed = SaveData.SetSource(source)
+    printLines(ValueExtractor.FormatSummary(parsed))
+
+    cout("======== [QUEST PLAN] ========")
+    if shared._PS99.Features and shared._PS99.Features.QuestManager then
+        printLines(shared._PS99.Features.QuestManager.FormatQuestPlan())
+    else
+        cout("QuestManager is not loaded.")
     end
 
-    local function scanForGoals()
-        local gc = getgc and getgc(true) or {}
-        for _, v in ipairs(gc) do
-            if type(v) == "table" and rawget(v, "Goals") and type(rawget(v, "Goals")) == "table" then
-                for id, goal in pairs(rawget(v, "Goals")) do
-                    if type(goal) == "table" and rawget(goal, "Type") then
-                        return rawget(v, "Goals")
-                    end
-                end
-            end
-        end
+    cout("===============================")
+    return parsed
+end
+
+function Sniffer.DumpSampleData()
+    if not (shared._PS99.Fixtures and shared._PS99.Fixtures.SampleSaveData) then
+        cout("[Parser] Sample fixture is not loaded.")
         return nil
     end
 
-    if not data then
-        cout("[Sniffer] Trying aggressive scan for active goals...")
-        local activeGoals = scanForGoals()
-        
-        -- Lets also dump the local player's attributes just in case
-        local p = game:GetService("Players").LocalPlayer
-        if p then
-            cout(string.format("Player Info: %s (MaxZone/Rank might be on attributes)", p.Name))
-            for k, v in pairs(p:GetAttributes()) do
-                if string.find(string.lower(tostring(k)), "rank") or string.find(string.lower(tostring(k)), "zone") then
-                    cout("Attr -> " .. tostring(k) .. ": " .. tostring(v))
-                end
-            end
-        end
-
-        if activeGoals then
-            cout("--- ACTIVE GOALS ---")
-            local gCount = 0
-            for id, goal in pairs(activeGoals) do
-                gCount = gCount + 1
-                cout(string.format("--- ID: %s ---", tostring(id)))
-                for k,v in pairs(goal) do
-                    cout(string.format("  %s: %s", tostring(k), tostring(v)))
-                end
-            end
-            if gCount == 0 then cout("Found goals object but it is empty.") end
-            cout("======================================")
-            return
-        end
-
-        cout("[Sniffer] Could not find SaveData via Library or GC!")
-        return
-    end
-
-    cout("Rank: " .. tostring(data.Rank))
-    cout("Stars: " .. tostring(data.Stars))
-    cout("MaxZone: " .. tostring(data.MaxZone))
-    cout("--- ACTIVE GOALS ---")
-    local goals = data.Goals or {}
-    local goalCount = 0
-    for id, goal in pairs(goals) do
-        goalCount = goalCount + 1
-        cout(string.format("--- ID: %s ---", tostring(id)))
-        for k,v in pairs(goal) do
-            cout(string.format("  %s: %s", tostring(k), tostring(v)))
-        end
-    end
-    if goalCount == 0 then
-        cout("No active goals found in SaveData.")
-    end
-    cout("======================================")
+    return Sniffer.ParseSource(shared._PS99.Fixtures.SampleSaveData, "sample_savedata.lua")
 end
 
-local isSpying = false
+function Sniffer.DumpCurrentData()
+    return Sniffer.ParseSource(SaveData.GetRawSource() or {}, "current source")
+end
+
 function Sniffer.SpyNetwork()
-    if isSpying then 
-        cout("[Sniffer] Spy already active!")
-        return 
-    end
-    isSpying = true
-
-    cout("[Sniffer] Scanning ReplicatedStorage for Network/Save modules...")
-
-    -- Blacklist extremely spammy remotes to not lag mobile devices
-    local Blacklist = {
-        ["PlayerPing"] = true,
-        ["Breakables_PlayerMineUpdate"] = true,
-        ["Pets_SetTarget"] = true,
-        ["Hoverboards_Move"] = true,
-        ["PerformAction"] = true,
-        ["Breakables_MineUpdate"] = true,
-        ["Breakables_PlayerInstaMine"] = true
-    }
-
-    local foundNet = false
-    pcall(function()
-        for _, v in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
-            if v:IsA("ModuleScript") and v.Name == "Network" then
-                local success, m = pcall(require, v)
-                if success and type(m) == "table" and (m.Fire or m.Invoke) then
-                    cout("-> Hooked Network Module at: " .. v:GetFullName())
-                    foundNet = true
-                    if m.Fire then
-                        local oldF = m.Fire
-                        m.Fire = function(...)
-                            local args = {...}
-                            local name = tostring(args[1])
-                            if not Blacklist[name] then
-                                task.spawn(function() cout("[Net.Fire] " .. name .. " | arg#: " .. tostring(#args - 1)) end)
-                            end
-                            return oldF(...)
-                        end
-                    end
-                    if m.Invoke then
-                        local oldI = m.Invoke
-                        m.Invoke = function(...)
-                            local args = {...}
-                            local name = tostring(args[1])
-                            if not Blacklist[name] then
-                                task.spawn(function() cout("[Net.Invoke] " .. name .. " | arg#: " .. tostring(#args - 1)) end)
-                            end
-                            return oldI(...)
-                        end
-                    end
-                    break
-                end
-            end
-        end
-    end)
-
-    if not foundNet then
-        cout("[Sniffer] Failed to hook module. Hooking __namecall as fallback...")
-        if not hookmetamethod then return end
-        local oldNamecall
-        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-            local method = getnamecallmethod()
-            if method == "FireServer" or method == "InvokeServer" then
-                if typeof(self) == "Instance" and not Blacklist[self.Name] then
-                    local args = {...}
-                    local strArgs = ""
-                    for i, v in ipairs(args) do
-                        if type(v) == "table" then strArgs = strArgs .. "[table], " else strArgs = strArgs .. tostring(v) .. ", " end
-                    end
-                    local name = tostring(self.Name)
-                    task.spawn(function()
-                        cout(string.format("[Spy] %s | %s", name, strArgs))
-                    end)
-                end
-            end
-            return oldNamecall(self, ...)
-        end)
-    end
+    cout("[Parser] Remote spying is disabled in this safe debug build.")
+    cout("[Parser] Use Sniffer.ParseSource(table) with a pasted or fixture table instead.")
 end
 
 
@@ -372,63 +379,65 @@ end
 
 do
 local QuestManager = {}
-local Network = shared._PS99.Core.Network
 local SaveData = shared._PS99.Core.SaveData
 
--- This feature will handle parsing goals and automating them
 function QuestManager.GetActiveQuests()
-    -- Big Games stores active goals in SaveData.Goals
-    -- They usually look like: [{ Type = "BreakBreakables", Amount = 100, Progress = 25 }]
     return SaveData.GetGoals()
 end
 
-function QuestManager.AutoCompleteQuests()
-    local activeQuests = QuestManager.GetActiveQuests()
-    for id, questData in pairs(activeQuests) do
-        -- Check what type of quest it is
-        local qType = questData.Type
-        local progress = questData.Progress or 0
-        local amountNeeded = questData.Amount or 1
-        
-        if progress < amountNeeded then
-            QuestManager.DispatchQuestAction(qType, questData)
-        else
-            -- Might be ready to claim or just completed automatically
-            -- Claim remote can vary, e.g., "Goals_Claim"
-            Network.Fire("Goals_Claim", id)
+function QuestManager.GetQuestPlan()
+    local plan = {}
+
+    for _, questData in ipairs(QuestManager.GetActiveQuests()) do
+        local action = "review"
+
+        if questData.complete then
+            action = "ready"
+        elseif questData.type == "BreakBreakables" then
+            action = "farm_breakables"
+        elseif questData.type == "HatchPets" then
+            action = "hatch"
+        elseif questData.type == "CollectDiamonds" then
+            action = "collect_diamonds"
+        elseif questData.type == "UsePotions" then
+            action = "use_potions"
+        elseif questData.type == "UpgradeEnchants" then
+            action = "upgrade_enchants"
         end
+
+        table.insert(plan, {
+            id = questData.id,
+            type = questData.type,
+            progress = questData.progress,
+            amount = questData.amount,
+            complete = questData.complete,
+            action = action,
+        })
     end
+
+    return plan
 end
 
--- Route different quest types to their respective actions
-function QuestManager.DispatchQuestAction(questType, questData)
-    print("[AutoRank] Handling Quest:", questType)
-    
-    if questType == "BreakBreakables" then
-        -- Teleport to highest area and break coins
-        
-    elseif questType == "HatchPets" then
-        -- Go to best egg and hatch it
-        
-    elseif questType == "CollectDiamonds" then
-        -- Break diamond breakables
-        
-    elseif questType == "UsePotions" then
-        -- Pop low tier potions based on required amount
-        
-    elseif questType == "UpgradeEnchants" then
-        -- Go to enchant machine
-        
-    else
-        warn("[AutoRank] Unhandled Quest Type:", questType)
-    end
-end
+function QuestManager.FormatQuestPlan()
+    local lines = {}
+    local plan = QuestManager.GetQuestPlan()
 
--- Rank Up Logic
-function QuestManager.CheckRankUp()
-    -- Call the Rank Up remote if stars are maxed out for current rank
-    -- Note: you need to find the exact remote for this, typically "Rank_Up"
-    Network.Fire("Rank_Up")
+    if #plan == 0 then
+        return "No quests found in the current data source."
+    end
+
+    for _, quest in ipairs(plan) do
+        table.insert(lines, string.format(
+            "%s | %s | %s/%s | %s",
+            tostring(quest.id),
+            tostring(quest.type),
+            tostring(quest.progress),
+            tostring(quest.amount),
+            tostring(quest.action)
+        ))
+    end
+
+    return table.concat(lines, "\n")
 end
 
 
@@ -438,36 +447,17 @@ end
 
 do
 local Farming = {}
-local Network = shared._PS99.Core.Network
 
--- Get all currently loaded breakables in the active zone
 function Farming.GetBreakables()
-    local breakables = {}
-    local workspaceBreakables = workspace:FindFirstChild("__THINGS") and workspace.__THINGS:FindFirstChild("Breakables")
-    
-    if workspaceBreakables then
-        for _, b in pairs(workspaceBreakables:GetChildren()) do
-            if b:GetAttribute("Health") and b:GetAttribute("Health") > 0 then
-                table.insert(breakables, b)
-            end
-        end
-    end
-    return breakables
+    return {}
 end
 
--- Teleport to the best unlocked area
 function Farming.TeleportToBestArea()
-    -- Big Games zone teleports are usually handled locally
-    -- Typically, 'Map' or 'Zones' folder holds the CFrame
-    -- We can fire a teleport remote or locally tween
-    print("[Farming] Teleporting to best area...")
-    local bestZone = "Spawn" -- Stub: You will need logic to determine highest unlocked zone
-    Network.Fire("TeleportToZone", bestZone)
+    print("[Farming] Disabled in safe parser build.")
 end
 
-function Farming.AttackBreakable(breakableId)
-    -- Join breakable remote
-    Network.Fire("Breakables_PlayerInstaMine", breakableId) -- or "Breakables_Join"
+function Farming.AttackBreakable()
+    print("[Farming] Disabled in safe parser build.")
 end
 
 
@@ -478,7 +468,6 @@ end
 do
 local UI = {}
 UI.LogScroll = nil
-UI.LogLayout = nil
 UI.LogCounter = 0
 UI.AllLogsText = ""
 
@@ -487,7 +476,7 @@ function UI.Log(msg)
     print(text)
     UI.AllLogsText = UI.AllLogsText .. text .. "\n"
     if not UI.LogScroll then return end
-    
+
     local success, err = pcall(function()
         UI.LogCounter = (UI.LogCounter or 0) + 1
         local lbl = Instance.new("TextLabel")
@@ -504,7 +493,7 @@ function UI.Log(msg)
         lbl.TextWrapped = true
         lbl.LayoutOrder = UI.LogCounter
         lbl.Parent = UI.LogScroll
-        
+
         task.spawn(function()
             task.wait(0.1)
             if UI.LogScroll then
@@ -512,86 +501,95 @@ function UI.Log(msg)
             end
         end)
     end)
-    
+
     if not success then
         print("[UI.Log Error]", err)
     end
 end
 
+local function makeButton(parent, text, position, size, color)
+    local button = Instance.new("TextButton", parent)
+    button.Size = size
+    button.Position = position
+    button.Text = text
+    button.BackgroundColor3 = color
+    button.TextColor3 = Color3.new(1, 1, 1)
+    button.Font = Enum.Font.GothamBold
+    button.TextSize = 13
+    Instance.new("UICorner", button).CornerRadius = UDim.new(0, 4)
+    return button
+end
+
 function UI.Init()
     local player = game:GetService("Players").LocalPlayer
-    
+
     local parentGUI = nil
     pcall(function() if gethui then parentGUI = gethui() end end)
     if not parentGUI then pcall(function() parentGUI = game:GetService("CoreGui") end) end
     if not parentGUI then parentGUI = player:WaitForChild("PlayerGui") end
 
-    if parentGUI:FindFirstChild("PS99_AutoRankHub") then
-        parentGUI.PS99_AutoRankHub:Destroy()
+    if parentGUI:FindFirstChild("PS99_ValueParser") then
+        parentGUI.PS99_ValueParser:Destroy()
     end
-    
+
     UI.LogCounter = 0
     UI.AllLogsText = ""
-    
+
     local gui = Instance.new("ScreenGui")
-    gui.Name = "PS99_AutoRankHub"
+    gui.Name = "PS99_ValueParser"
     gui.ResetOnSpawn = false
     gui.Parent = parentGUI
-    
+
     local frame = Instance.new("Frame", gui)
-    frame.Size = UDim2.new(0, 420, 0, 360)
-    frame.Position = UDim2.new(0.5, -210, 0.5, -180)
+    frame.Size = UDim2.new(0, 440, 0, 360)
+    frame.Position = UDim2.new(0.5, -220, 0.5, -180)
     frame.BackgroundColor3 = Color3.fromRGB(25, 27, 34)
     frame.Active = true
     frame.Draggable = true
     Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
-    
+
     local title = Instance.new("TextLabel", frame)
     title.Size = UDim2.new(1, 0, 0, 40)
-    title.Text = " PS99 Auto Rank Hub (Dev Analyzer)"
+    title.Text = " Value Parser"
     title.Font = Enum.Font.GothamBold
     title.TextSize = 14
     title.TextColor3 = Color3.new(1, 1, 1)
     title.BackgroundColor3 = Color3.fromRGB(15, 17, 22)
     title.TextXAlignment = Enum.TextXAlignment.Left
     Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
-    
-    local toggleBtn = Instance.new("TextButton", frame)
-    toggleBtn.Size = UDim2.new(0.45, 0, 0, 40)
-    toggleBtn.Position = UDim2.new(0, 10, 0, 50)
-    toggleBtn.Text = "Auto Rank: OFF"
-    toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
-    toggleBtn.TextColor3 = Color3.new(1, 1, 1)
-    toggleBtn.Font = Enum.Font.GothamBold
-    Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 4)
 
-    local debugBtn = Instance.new("TextButton", frame)
-    debugBtn.Size = UDim2.new(0.45, 0, 0, 40)
-    debugBtn.Position = UDim2.new(0.55, -10, 0, 50)
-    debugBtn.Text = "Extract Memory"
-    debugBtn.BackgroundColor3 = Color3.fromRGB(40, 120, 180)
-    debugBtn.TextColor3 = Color3.new(1, 1, 1)
-    debugBtn.Font = Enum.Font.GothamBold
-    Instance.new("UICorner", debugBtn).CornerRadius = UDim.new(0, 4)
+    local sampleBtn = makeButton(
+        frame,
+        "Parse Sample",
+        UDim2.new(0, 10, 0, 50),
+        UDim2.new(0.33, -12, 0, 38),
+        Color3.fromRGB(40, 120, 180)
+    )
 
-    local spyBtn = Instance.new("TextButton", frame)
-    spyBtn.Size = UDim2.new(0.7, -15, 0, 30)
-    spyBtn.Position = UDim2.new(0, 10, 0, 100)
-    spyBtn.Text = "Spy Remotes"
-    spyBtn.BackgroundColor3 = Color3.fromRGB(80, 40, 180)
-    spyBtn.TextColor3 = Color3.new(1, 1, 1)
-    spyBtn.Font = Enum.Font.GothamBold
-    Instance.new("UICorner", spyBtn).CornerRadius = UDim.new(0, 4)
+    local currentBtn = makeButton(
+        frame,
+        "Parse Current",
+        UDim2.new(0.33, 6, 0, 50),
+        UDim2.new(0.34, -12, 0, 38),
+        Color3.fromRGB(80, 120, 80)
+    )
 
-    local copyBtn = Instance.new("TextButton", frame)
-    copyBtn.Size = UDim2.new(0.3, -5, 0, 30)
-    copyBtn.Position = UDim2.new(0.7, 5, 0, 100)
-    copyBtn.Text = "Copy Logs"
-    copyBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 120)
-    copyBtn.TextColor3 = Color3.new(1, 1, 1)
-    copyBtn.Font = Enum.Font.GothamBold
-    Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 4)
-    
+    local copyBtn = makeButton(
+        frame,
+        "Copy Logs",
+        UDim2.new(0.67, 2, 0, 50),
+        UDim2.new(0.33, -12, 0, 38),
+        Color3.fromRGB(40, 150, 120)
+    )
+
+    local planBtn = makeButton(
+        frame,
+        "Quest Plan",
+        UDim2.new(0, 10, 0, 96),
+        UDim2.new(1, -20, 0, 32),
+        Color3.fromRGB(120, 90, 40)
+    )
+
     UI.LogScroll = Instance.new("ScrollingFrame", frame)
     UI.LogScroll.Size = UDim2.new(1, -20, 1, -150)
     UI.LogScroll.Position = UDim2.new(0, 10, 0, 140)
@@ -599,40 +597,28 @@ function UI.Init()
     UI.LogScroll.ScrollBarThickness = 4
     UI.LogScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
     Instance.new("UICorner", UI.LogScroll).CornerRadius = UDim.new(0, 4)
-    
-    UI.LogLayout = Instance.new("UIListLayout", UI.LogScroll)
-    UI.LogLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    
-    local active = false
-    toggleBtn.MouseButton1Click:Connect(function()
-        active = not active
-        toggleBtn.Text = active and "Auto Rank: ON" or "Auto Rank: OFF"
-        toggleBtn.BackgroundColor3 = active and Color3.fromRGB(40, 180, 80) or Color3.fromRGB(180, 40, 40)
-        
-        if active then
-            UI.Log("Started AutoRank loop...")
-            task.spawn(function()
-                while active and task.wait(1) do
-                    if shared._PS99.Features and shared._PS99.Features.QuestManager then
-                        shared._PS99.Features.QuestManager.AutoCompleteQuests()
-                        shared._PS99.Features.QuestManager.CheckRankUp()
-                    end
-                end
-            end)
-        else
-            UI.Log("Stopped AutoRank loop.")
+
+    local layout = Instance.new("UIListLayout", UI.LogScroll)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+    sampleBtn.MouseButton1Click:Connect(function()
+        if shared._PS99.Debug and shared._PS99.Debug.Sniffer then
+            shared._PS99.Debug.Sniffer.DumpSampleData()
         end
     end)
 
-    debugBtn.MouseButton1Click:Connect(function()
+    currentBtn.MouseButton1Click:Connect(function()
         if shared._PS99.Debug and shared._PS99.Debug.Sniffer then
-            shared._PS99.Debug.Sniffer.DumpSaveData()
+            shared._PS99.Debug.Sniffer.DumpCurrentData()
         end
     end)
 
-    spyBtn.MouseButton1Click:Connect(function()
-        if shared._PS99.Debug and shared._PS99.Debug.Sniffer then
-            shared._PS99.Debug.Sniffer.SpyNetwork()
+    planBtn.MouseButton1Click:Connect(function()
+        if shared._PS99.Features and shared._PS99.Features.QuestManager then
+            UI.Log("======== [QUEST PLAN] ========")
+            for line in shared._PS99.Features.QuestManager.FormatQuestPlan():gmatch("([^\n]+)") do
+                UI.Log(line)
+            end
         end
     end)
 
@@ -640,18 +626,18 @@ function UI.Init()
         local success = pcall(function()
             if setclipboard then
                 setclipboard(UI.AllLogsText)
-                UI.Log("Logs copied to clipboard!")
+                UI.Log("Logs copied to clipboard.")
             elseif toclipboard then
                 toclipboard(UI.AllLogsText)
-                UI.Log("Logs copied to clipboard!")
+                UI.Log("Logs copied to clipboard.")
             else
-                UI.Log("Executor does not support clipboard copying.")
+                UI.Log("Clipboard copying is not available in this environment.")
             end
         end)
         if not success then UI.Log("Failed to copy logs.") end
     end)
-    
-    UI.Log("UI Initialized. Ready to sniff data!")
+
+    UI.Log("UI initialized. Parse a fixture or call Sniffer.ParseSource(table).")
 end
 
 
@@ -660,9 +646,9 @@ end
 end
 
 
--- Autostart UI
 if shared._PS99.UI and shared._PS99.UI.Init then
     shared._PS99.UI.Init()
 end
 
-print("[PS99 Bundle] Loaded successfully!")
+print("[PS99 Bundle] Loaded safe parser build successfully.")
+
