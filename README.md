@@ -1,20 +1,39 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# PSPS Safe Parser Build
 
-# Run and deploy your AI Studio app
+This workspace copy focuses on value parsing from explicit Lua tables and local fixtures.
 
-This contains everything you need to run your app locally.
+## What changed
 
-View your app in AI Studio: https://ai.studio/apps/787bcf35-14a4-45d2-b44b-f12034fb53e2
+- Added `src/core/value_extractor.lua` to normalize rank, stars, max zone, and goals.
+- Added `src/fixtures/sample_savedata.lua` for local parser development.
+- Reworked `src/core/savedata.lua` to expose normalized values.
+- Reworked `src/debug/sniffer.lua` into a safe parser/diagnostics module.
+- Reworked `src/features/quest_manager.lua` to produce a readable quest plan.
+- Updated `loader.lua`, `src/ui/window.lua`, and `bundler.js` for the new flow.
 
-## Run Locally
+## Use
 
-**Prerequisites:**  Node.js
+Run:
 
+```sh
+npm run bundle
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Then inspect `test_bundle.lua`.
+
+You can parse a custom table with:
+
+```lua
+shared._PS99.Debug.Sniffer.ParseSource({
+    Profile = {
+        Data = {
+            Rank = 4,
+            Stars = 9,
+            MaxZone = 18,
+            Goals = {
+                quest_1 = { Type = "BreakBreakables", Progress = 10, Amount = 50 }
+            }
+        }
+    }
+}, "custom sample")
+```
