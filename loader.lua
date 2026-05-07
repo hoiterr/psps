@@ -16,12 +16,14 @@ print("[PS99 Loader] Fetching modules from " .. REPO_URL)
 
 shared._PS99.Core.Utils = loadModule("/src/core/utils.lua")
 shared._PS99.Core.ValueExtractor = loadModule("/src/core/value_extractor.lua")
+shared._PS99.Core.SchemaMapper = loadModule("/src/core/schema_mapper.lua")
 shared._PS99.Fixtures.SampleSaveData = loadModule("/src/fixtures/sample_savedata.lua")
 shared._PS99.Core.SaveData = loadModule("/src/core/savedata.lua")
 
 shared._PS99.Debug.Sniffer = loadModule("/src/debug/sniffer.lua")
 
 shared._PS99.Features.QuestManager = loadModule("/src/features/quest_manager.lua")
+shared._PS99.Features.RankPlanner = loadModule("/src/features/rank_planner.lua")
 shared._PS99.Features.Farming = loadModule("/src/features/farming.lua")
 
 shared._PS99.UI = loadModule("/src/ui/window.lua")
