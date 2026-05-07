@@ -2,6 +2,7 @@ local Sniffer = {}
 
 local SaveData = shared._PS99.Core.SaveData
 local ValueExtractor = shared._PS99.Core.ValueExtractor
+local SchemaMapper = shared._PS99.Core.SchemaMapper
 
 local function cout(msg)
     if shared._PS99 and shared._PS99.UI and shared._PS99.UI.Log then
@@ -24,11 +25,25 @@ function Sniffer.ParseSource(source, label)
     local parsed = SaveData.SetSource(source)
     printLines(ValueExtractor.FormatSummary(parsed))
 
+    cout("======== [SCHEMA MAP] ========")
+    if SchemaMapper then
+        printLines(SchemaMapper.Format(SchemaMapper.Map(source)))
+    else
+        cout("SchemaMapper is not loaded.")
+    end
+
     cout("======== [QUEST PLAN] ========")
     if shared._PS99.Features and shared._PS99.Features.QuestManager then
         printLines(shared._PS99.Features.QuestManager.FormatQuestPlan())
     else
         cout("QuestManager is not loaded.")
+    end
+
+    cout("======== [RANK PLAN] ========")
+    if shared._PS99.Features and shared._PS99.Features.RankPlanner then
+        printLines(shared._PS99.Features.RankPlanner.FormatPlan())
+    else
+        cout("RankPlanner is not loaded.")
     end
 
     cout("===============================")
