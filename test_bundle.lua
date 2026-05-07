@@ -223,6 +223,138 @@ end
 end
 
 do
+local SchemaMapper = {}
+
+local KEYWORDS = {
+    "rank",
+    "star",
+    "zone",
+    "goal",
+    "quest",
+    "progress",
+    "amount",
+    "target",
+    "required",
+    "complete",
+}
+
+local function isTable(value)
+    return type(value) == "table"
+end
+
+local function joinPath(path)
+    if #path == 0 then return "<root>" end
+    local parts = {}
+    for _, key in ipairs(path) do
+        table.insert(parts, tostring(key))
+    end
+    return table.concat(parts, ".")
+end
+
+local function looksInteresting(path, key, value)
+    local text = string.lower(joinPath(path) .. "." .. tostring(key))
+    for _, keyword in ipairs(KEYWORDS) do
+        if string.find(text, keyword, 1, true) then
+            return true
+        end
+    end
+
+    if isTable(value) then
+        local count = 0
+        local matched = 0
+        for _, child in pairs(value) do
+            count = count + 1
+            if isTable(child) then
+                if child.Type or child.type or child.Progress or child.progress or child.Amount or child.amount then
+                    matched = matched + 1
+                end
+            end
+            if count > 25 then break end
+        end
+        return matched > 0
+    end
+
+    return false
+end
+
+local function valuePreview(value)
+    if isTable(value) then
+        local count = 0
+        for _ in pairs(value) do
+            count = count + 1
+        end
+        return "table(" .. tostring(count) .. ")"
+    end
+
+    local text = tostring(value)
+    if #text > 40 then
+        text = string.sub(text, 1, 37) .. "..."
+    end
+    return text
+end
+
+local function walk(root, path, depth, seen, output, limit)
+    if not isTable(root) or depth > 6 or #output >= limit then return end
+    if seen[root] then return end
+    seen[root] = true
+
+    for key, value in pairs(root) do
+        local childPath = {}
+        for _, part in ipairs(path) do table.insert(childPath, part) end
+        table.insert(childPath, key)
+
+        if looksInteresting(path, key, value) then
+            table.insert(output, {
+                path = joinPath(childPath),
+                valueType = type(value),
+                preview = valuePreview(value),
+            })
+            if #output >= limit then return end
+        end
+
+        if isTable(value) then
+            walk(value, childPath, depth + 1, seen, output, limit)
+            if #output >= limit then return end
+        end
+    end
+end
+
+function SchemaMapper.Map(source, limit)
+    local output = {}
+    if not isTable(source) then
+        return output
+    end
+
+    walk(source, {}, 0, {}, output, limit or 80)
+    table.sort(output, function(a, b)
+        return a.path < b.path
+    end)
+    return output
+end
+
+function SchemaMapper.Format(mapping)
+    if not mapping or #mapping == 0 then
+        return "No rank/goal-like paths found."
+    end
+
+    local lines = {}
+    for _, item in ipairs(mapping) do
+        table.insert(lines, string.format(
+            "%s | %s | %s",
+            tostring(item.path),
+            tostring(item.valueType),
+            tostring(item.preview)
+        ))
+    end
+    return table.concat(lines, "\n")
+end
+
+
+
+    shared._PS99.Core.SchemaMapper = SchemaMapper
+end
+
+do
 local SampleSaveData = {
     Profile = {
         Data = {
@@ -321,6 +453,7 @@ local Sniffer = {}
 
 local SaveData = shared._PS99.Core.SaveData
 local ValueExtractor = shared._PS99.Core.ValueExtractor
+local SchemaMapper = shared._PS99.Core.SchemaMapper
 
 local function cout(msg)
     if shared._PS99 and shared._PS99.UI and shared._PS99.UI.Log then
@@ -343,11 +476,25 @@ function Sniffer.ParseSource(source, label)
     local parsed = SaveData.SetSource(source)
     printLines(ValueExtractor.FormatSummary(parsed))
 
+    cout("======== [SCHEMA MAP] ========")
+    if SchemaMapper then
+        printLines(SchemaMapper.Format(SchemaMapper.Map(source)))
+    else
+        cout("SchemaMapper is not loaded.")
+    end
+
     cout("======== [QUEST PLAN] ========")
     if shared._PS99.Features and shared._PS99.Features.QuestManager then
         printLines(shared._PS99.Features.QuestManager.FormatQuestPlan())
     else
         cout("QuestManager is not loaded.")
+    end
+
+    cout("======== [RANK PLAN] ========")
+    if shared._PS99.Features and shared._PS99.Features.RankPlanner then
+        printLines(shared._PS99.Features.RankPlanner.FormatPlan())
+    else
+        cout("RankPlanner is not loaded.")
     end
 
     cout("===============================")
@@ -443,6 +590,95 @@ end
 
 
     shared._PS99.Features.QuestManager = QuestManager
+end
+
+do
+local RankPlanner = {}
+local SaveData = shared._PS99.Core.SaveData
+
+local function completionRatio(goal)
+    local amount = tonumber(goal.amount) or 1
+    if amount <= 0 then return 1 end
+    return math.min((tonumber(goal.progress) or 0) / amount, 1)
+end
+
+function RankPlanner.GetPlan()
+    local parsed = SaveData.GetParsed()
+    local goals = parsed.goals or {}
+    local complete = 0
+    local active = {}
+
+    for _, goal in ipairs(goals) do
+        if goal.complete then
+            complete = complete + 1
+        else
+            table.insert(active, {
+                id = goal.id,
+                type = goal.type,
+                progress = goal.progress,
+                amount = goal.amount,
+                ratio = completionRatio(goal),
+            })
+        end
+    end
+
+    table.sort(active, function(a, b)
+        if a.ratio == b.ratio then
+            return tostring(a.id) < tostring(b.id)
+        end
+        return a.ratio > b.ratio
+    end)
+
+    return {
+        rank = parsed.rank,
+        stars = parsed.stars,
+        maxZone = parsed.maxZone,
+        goalsTotal = #goals,
+        goalsComplete = complete,
+        goalsRemaining = #active,
+        activeGoals = active,
+        readyForReview = #goals > 0 and #active == 0,
+    }
+end
+
+function RankPlanner.FormatPlan()
+    local plan = RankPlanner.GetPlan()
+    local lines = {}
+
+    table.insert(lines, "Rank: " .. tostring(plan.rank))
+    table.insert(lines, "Stars: " .. tostring(plan.stars))
+    table.insert(lines, "MaxZone: " .. tostring(plan.maxZone or "unknown"))
+    table.insert(lines, string.format(
+        "Goals: %s/%s complete",
+        tostring(plan.goalsComplete),
+        tostring(plan.goalsTotal)
+    ))
+
+    if plan.readyForReview then
+        table.insert(lines, "Status: all known goals are complete; review rank-up readiness manually.")
+    elseif plan.goalsRemaining == 0 then
+        table.insert(lines, "Status: no goals found in the current data source.")
+    else
+        table.insert(lines, "Next focus:")
+        for i, goal in ipairs(plan.activeGoals) do
+            if i > 5 then break end
+            table.insert(lines, string.format(
+                "%s | %s | %s/%s | %d%%",
+                tostring(goal.id),
+                tostring(goal.type),
+                tostring(goal.progress),
+                tostring(goal.amount),
+                math.floor((goal.ratio or 0) * 100)
+            ))
+        end
+    end
+
+    return table.concat(lines, "\n")
+end
+
+
+
+    shared._PS99.Features.RankPlanner = RankPlanner
 end
 
 do
@@ -584,7 +820,7 @@ function UI.Init()
 
     local planBtn = makeButton(
         frame,
-        "Quest Plan",
+        "Rank Plan",
         UDim2.new(0, 10, 0, 96),
         UDim2.new(1, -20, 0, 32),
         Color3.fromRGB(120, 90, 40)
@@ -614,9 +850,9 @@ function UI.Init()
     end)
 
     planBtn.MouseButton1Click:Connect(function()
-        if shared._PS99.Features and shared._PS99.Features.QuestManager then
-            UI.Log("======== [QUEST PLAN] ========")
-            for line in shared._PS99.Features.QuestManager.FormatQuestPlan():gmatch("([^\n]+)") do
+        if shared._PS99.Features and shared._PS99.Features.RankPlanner then
+            UI.Log("======== [RANK PLAN] ========")
+            for line in shared._PS99.Features.RankPlanner.FormatPlan():gmatch("([^\n]+)") do
                 UI.Log(line)
             end
         end
@@ -650,5 +886,5 @@ if shared._PS99.UI and shared._PS99.UI.Init then
     shared._PS99.UI.Init()
 end
 
-print("[PS99 Bundle] Loaded safe parser build successfully.")
+print("[PSPS Bundle] Loaded safe parser build successfully.")
 
