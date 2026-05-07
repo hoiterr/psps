@@ -6,11 +6,17 @@ function Utils.FormatNumber(n)
     return n:reverse():gsub("%d%d%d", "%1,"):reverse():gsub("^,", "")
 end
 
+function Utils.GetPlayer()
+    return game:GetService("Players").LocalPlayer
+end
+
 function Utils.DeepCopy(original)
-    if type(original) ~= "table" then return original end
     local copy = {}
     for k, v in pairs(original) do
-        copy[k] = Utils.DeepCopy(v)
+        if type(v) == "table" then
+            v = Utils.DeepCopy(v)
+        end
+        copy[k] = v
     end
     return copy
 end

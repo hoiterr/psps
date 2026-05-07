@@ -1,63 +1,61 @@
 local QuestManager = {}
+local Network = shared._PS99.Core.Network
 local SaveData = shared._PS99.Core.SaveData
 
+-- This feature will handle parsing goals and automating them
 function QuestManager.GetActiveQuests()
+    -- Big Games stores active goals in SaveData.Goals
+    -- They usually look like: [{ Type = "BreakBreakables", Amount = 100, Progress = 25 }]
     return SaveData.GetGoals()
 end
 
-function QuestManager.GetQuestPlan()
-    local plan = {}
-
-    for _, questData in ipairs(QuestManager.GetActiveQuests()) do
-        local action = "review"
-
-        if questData.complete then
-            action = "ready"
-        elseif questData.type == "BreakBreakables" then
-            action = "farm_breakables"
-        elseif questData.type == "HatchPets" then
-            action = "hatch"
-        elseif questData.type == "CollectDiamonds" then
-            action = "collect_diamonds"
-        elseif questData.type == "UsePotions" then
-            action = "use_potions"
-        elseif questData.type == "UpgradeEnchants" then
-            action = "upgrade_enchants"
+function QuestManager.AutoCompleteQuests()
+    local activeQuests = QuestManager.GetActiveQuests()
+    for id, questData in pairs(activeQuests) do
+        -- Check what type of quest it is
+        local qType = questData.Type
+        local progress = questData.Progress or 0
+        local amountNeeded = questData.Amount or 1
+        
+        if progress < amountNeeded then
+            QuestManager.DispatchQuestAction(qType, questData)
+        else
+            -- Might be ready to claim or just completed automatically
+            -- Claim remote can vary, e.g., "Goals_Claim"
+            Network.Fire("Goals_Claim", id)
         end
-
-        table.insert(plan, {
-            id = questData.id,
-            type = questData.type,
-            progress = questData.progress,
-            amount = questData.amount,
-            complete = questData.complete,
-            action = action,
-        })
     end
-
-    return plan
 end
 
-function QuestManager.FormatQuestPlan()
-    local lines = {}
-    local plan = QuestManager.GetQuestPlan()
-
-    if #plan == 0 then
-        return "No quests found in the current data source."
+-- Route different quest types to their respective actions
+function QuestManager.DispatchQuestAction(questType, questData)
+    print("[AutoRank] Handling Quest:", questType)
+    
+    if questType == "BreakBreakables" then
+        -- Teleport to highest area and break coins
+        
+    elseif questType == "HatchPets" then
+        -- Go to best egg and hatch it
+        
+    elseif questType == "CollectDiamonds" then
+        -- Break diamond breakables
+        
+    elseif questType == "UsePotions" then
+        -- Pop low tier potions based on required amount
+        
+    elseif questType == "UpgradeEnchants" then
+        -- Go to enchant machine
+        
+    else
+        warn("[AutoRank] Unhandled Quest Type:", questType)
     end
+end
 
-    for _, quest in ipairs(plan) do
-        table.insert(lines, string.format(
-            "%s | %s | %s/%s | %s",
-            tostring(quest.id),
-            tostring(quest.type),
-            tostring(quest.progress),
-            tostring(quest.amount),
-            tostring(quest.action)
-        ))
-    end
-
-    return table.concat(lines, "\n")
+-- Rank Up Logic
+function QuestManager.CheckRankUp()
+    -- Call the Rank Up remote if stars are maxed out for current rank
+    -- Note: you need to find the exact remote for this, typically "Rank_Up"
+    Network.Fire("Rank_Up")
 end
 
 return QuestManager

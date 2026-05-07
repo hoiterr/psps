@@ -1,55 +1,65 @@
 local SaveData = {}
 
-local ValueExtractor = shared._PS99.Core.ValueExtractor
+local SaveModuleCache = nil
 
-local currentSource = nil
-local currentParsed = nil
-
-local function parseSource(source)
-    currentSource = source
-    currentParsed = ValueExtractor.Normalize(source)
-    return currentParsed
-end
-
-function SaveData.SetSource(source)
-    return parseSource(source)
-end
-
-function SaveData.UseSample()
-    if shared._PS99.Fixtures and shared._PS99.Fixtures.SampleSaveData then
-        return parseSource(shared._PS99.Fixtures.SampleSaveData)
+local function GetSaveData()
+    if SaveModuleCache then
+        local suc, res = pcall(function() return SaveModuleCache.Get() end)
+        if suc and res and type(res) == "table" then return res end
     end
 
-    return parseSource({})
+    for _, v in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+        if v:IsA("ModuleScript") and v.Name == "Save" then
+            pcall(function()
+                local m = require(v)
+                if type(m) == "table" and m.Get then
+                    local suc, res = pcall(function() return m.Get() end)
+                    if suc and type(res) == "table" and res.Goals then
+                        SaveModuleCache = m
+                        return res
+                    end
+                end
+            end)
+        end
+        if SaveModuleCache then
+            local suc, res = pcall(function() return SaveModuleCache.Get() end)
+            if suc and res and type(res) == "table" then return res end
+        end
+    end
+    
+    local gc = getgc and getgc(true) or {}
+    for _, v in ipairs(gc) do
+        if type(v) == "table" and rawget(v, "Goals") and rawget(v, "Rank") then
+            return v
+        end
+    end
+    
+    return nil
 end
 
-function SaveData.GetParsed()
-    if currentParsed then return currentParsed end
-    return SaveData.UseSample()
-end
-
+-- Get current goals (quests)
 function SaveData.GetGoals()
-    return SaveData.GetParsed().goals or {}
+    local data = GetSaveData()
+    if data and data.Goals then
+        return data.Goals
+    end
+    return {}
 end
 
 function SaveData.GetRank()
-    return SaveData.GetParsed().rank or 1
+    local data = GetSaveData()
+    if data and data.Rank then
+        return data.Rank
+    end
+    return 1
 end
 
 function SaveData.GetStars()
-    return SaveData.GetParsed().stars or 0
-end
-
-function SaveData.GetMaxZone()
-    return SaveData.GetParsed().maxZone
-end
-
-function SaveData.GetSummary()
-    return ValueExtractor.FormatSummary(SaveData.GetParsed())
-end
-
-function SaveData.GetRawSource()
-    return currentSource
+    local data = GetSaveData()
+    if data and data.Stars then
+        return data.Stars
+    end
+    return 0
 end
 
 return SaveData
