@@ -1,7 +1,15 @@
 local Sniffer = {}
 
+local function cout(msg)
+    if shared._PS99 and shared._PS99.UI and shared._PS99.UI.Log then
+        shared._PS99.UI.Log(msg)
+    else
+        print(msg)
+    end
+end
+
 function Sniffer.DumpSaveData()
-    print("======== [PS99 SAVE UNPACKED] ========")
+    cout("======== [PS99 SAVE UNPACKED] ========")
     
     local gc = getgc and getgc(true) or {}
     local data = nil
@@ -24,17 +32,17 @@ function Sniffer.DumpSaveData()
     end
 
     if not data then
-        warn("[Sniffer] Could not find SaveData in GC!")
+        cout("[Sniffer] Could not find SaveData in GC!")
         return
     end
 
-    print("Rank:", data.Rank)
-    print("Stars:", data.Stars)
-    print("MaxZone:", data.MaxZone)
-    print("\n--- ACTIVE GOALS ---")
+    cout("Rank: " .. tostring(data.Rank))
+    cout("Stars: " .. tostring(data.Stars))
+    cout("MaxZone: " .. tostring(data.MaxZone))
+    cout("--- ACTIVE GOALS ---")
     local goals = data.Goals or {}
     for id, goal in pairs(goals) do
-        print(string.format("ID: %s | Type: %s | Progress: %s/%s | Stars: %s", 
+        cout(string.format("ID: %s | Type: %s | Progress: %s/%s | Stars: %s", 
             tostring(id), 
             tostring(goal.Type), 
             tostring(goal.Progress or 0), 
@@ -42,25 +50,35 @@ function Sniffer.DumpSaveData()
             tostring(goal.Stars or "?")
         ))
     end
-    print("======================================")
+    cout("======================================")
 end
 
+local isSpying = false
 function Sniffer.SpyNetwork()
+    if isSpying then 
+        cout("[Sniffer] Spy already active!")
+        return 
+    end
+
     if not hookmetamethod then
-        warn("[Sniffer] Your executor does not support hookmetamethod. Cannot log remotes.")
+        cout("[Sniffer] Your executor lacks hookmetamethod. Cannot spy.")
         return
     end
 
-    print("[Sniffer] Hooking __namecall to spy on Network...")
+    cout("[Sniffer] Hooking __namecall to spy on Network...")
+    isSpying = true
+
     local NetworkFolder = game:GetService("ReplicatedStorage"):WaitForChild("Network", 5)
     
-    -- Very spammy remotes we don't care about when reverse engineering quests
+    -- Blacklist extremely spammy remotes to not lag mobile devices
     local Blacklist = {
         ["PlayerPing"] = true,
         ["Breakables_PlayerMineUpdate"] = true,
         ["Pets_SetTarget"] = true,
         ["Hoverboards_Move"] = true,
-        ["PerformAction"] = true
+        ["PerformAction"] = true,
+        ["Breakables_MineUpdate"] = true,
+        ["Breakables_PlayerInstaMine"] = true
     }
 
     local oldNamecall
@@ -71,20 +89,18 @@ function Sniffer.SpyNetwork()
                 local args = {...}
                 local strArgs = ""
                 for i, v in ipairs(args) do
-                    strArgs = strArgs .. tostring(v) .. (i < #args and ", " or "")
+                    if type(v) == "table" then
+                        strArgs = strArgs .. "[table]" .. (i < #args and ", " or "")
+                    else
+                        strArgs = strArgs .. tostring(v) .. (i < #args and ", " or "")
+                    end
                 end
-                print(string.format("[Spy] %s | Method: %s | Args: %s", self.Name, method, strArgs))
+                cout(string.format("[Spy] %s | %s", self.Name, strArgs))
             end
         end
         return oldNamecall(self, ...)
     end)
-    print("[Sniffer] Network hooked. Open console (F9) to watch remotes as you play!")
-end
-
-function Sniffer.Init()
-    print("[Sniffer] Initializing Debug Tools...")
-    Sniffer.DumpSaveData()
-    Sniffer.SpyNetwork()
+    cout("[Sniffer] Spy Hooked. Performing game actions will log remotes here.")
 end
 
 return Sniffer

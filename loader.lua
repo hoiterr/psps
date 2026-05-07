@@ -1,6 +1,6 @@
 local REPO_URL = "https://raw.githubusercontent.com/hoiterr/psps/main"
 
-shared._PS99 = shared._PS99 or { Core = {}, Features = {}, UI = {} }
+shared._PS99 = shared._PS99 or { Core = {}, Features = {}, UI = {}, Debug = {} }
 
 local function loadModule(path)
     local success, result = pcall(function()
@@ -12,15 +12,15 @@ local function loadModule(path)
     return result
 end
 
--- Load Core First
+print("[PS99 Loader] Fetching modules from " .. REPO_URL)
+
+-- Load Core
 shared._PS99.Core.Utils = loadModule("/src/core/utils.lua")
 shared._PS99.Core.Network = loadModule("/src/core/network.lua")
 shared._PS99.Core.SaveData = loadModule("/src/core/savedata.lua")
 
--- Load Debug Tools
-shared._PS99.Debug = {
-    Sniffer = loadModule("/src/debug/sniffer.lua")
-}
+-- Load Debug
+shared._PS99.Debug.Sniffer = loadModule("/src/debug/sniffer.lua")
 
 -- Load Features
 shared._PS99.Features.QuestManager = loadModule("/src/features/quest_manager.lua")
@@ -28,6 +28,11 @@ shared._PS99.Features.Farming = loadModule("/src/features/farming.lua")
 
 -- Load UI
 shared._PS99.UI = loadModule("/src/ui/window.lua")
+
+-- Autostart UI
+if shared._PS99.UI and shared._PS99.UI.Init then
+    shared._PS99.UI.Init()
+end
 
 print("[PS99 Loader] Loaded successfully!")
 return shared._PS99
