@@ -1,4 +1,4 @@
-local REPO_URL = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main"
+local REPO_URL = "https://raw.githubusercontent.com/hoiterr/psps/main"
 
 shared._PS99 = shared._PS99 or { Core = {}, Features = {}, UI = {} }
 
