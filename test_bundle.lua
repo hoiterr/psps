@@ -204,6 +204,18 @@ function Sniffer.DumpSaveData()
     if not data then
         cout("[Sniffer] Trying aggressive scan for active goals...")
         local activeGoals = scanForGoals()
+        
+        -- Lets also dump the local player's attributes just in case
+        local p = game:GetService("Players").LocalPlayer
+        if p then
+            cout(string.format("Player Info: %s (MaxZone/Rank might be on attributes)", p.Name))
+            for k, v in pairs(p:GetAttributes()) do
+                if string.find(string.lower(tostring(k)), "rank") or string.find(string.lower(tostring(k)), "zone") then
+                    cout("Attr -> " .. tostring(k) .. ": " .. tostring(v))
+                end
+            end
+        end
+
         if activeGoals then
             cout("--- ACTIVE GOALS ---")
             local gCount = 0
@@ -249,17 +261,8 @@ function Sniffer.SpyNetwork()
         cout("[Sniffer] Spy already active!")
         return 
     end
-
-    if not hookmetamethod then
-        cout("[Sniffer] Your executor lacks hookmetamethod. Cannot spy.")
-        return
-    end
-
-    cout("[Sniffer] Hooking __namecall to spy on Network...")
     isSpying = true
 
-    local NetworkFolder = game:GetService("ReplicatedStorage"):WaitForChild("Network", 5)
-    
     -- Blacklist extremely spammy remotes to not lag mobile devices
     local Blacklist = {
         ["PlayerPing"] = true,
@@ -270,6 +273,63 @@ function Sniffer.SpyNetwork()
         ["Breakables_MineUpdate"] = true,
         ["Breakables_PlayerInstaMine"] = true
     }
+
+    local Library
+    pcall(function() Library = require(game:GetService("ReplicatedStorage").Library) end)
+    
+    if Library and Library.Network then
+        cout("[Sniffer] Hooking Library.Network module directly (Bypasses executor limits!)")
+        
+        local oldFire = Library.Network.Fire
+        if oldFire then
+            Library.Network.Fire = function(...)
+                local args = {...}
+                local name = tostring(args[1])
+                if not Blacklist[name] then
+                    local strArgs = ""
+                    for i=2, #args do
+                        if type(args[i]) == "table" then
+                            strArgs = strArgs .. "[table], "
+                        else
+                            strArgs = strArgs .. tostring(args[i]) .. ", "
+                        end
+                    end
+                    task.spawn(function() cout(string.format("[Spy-F] %s | %s", name, strArgs)) end)
+                end
+                return oldFire(...)
+            end
+        end
+        
+        local oldInvoke = Library.Network.Invoke
+        if oldInvoke then
+            Library.Network.Invoke = function(...)
+                local args = {...}
+                local name = tostring(args[1])
+                if not Blacklist[name] then
+                    local strArgs = ""
+                    for i=2, #args do
+                        if type(args[i]) == "table" then
+                            strArgs = strArgs .. "[table], "
+                        else
+                            strArgs = strArgs .. tostring(args[i]) .. ", "
+                        end
+                    end
+                    task.spawn(function() cout(string.format("[Spy-I] %s | %s", name, strArgs)) end)
+                end
+                return oldInvoke(...)
+            end
+        end
+        cout("[Sniffer] Module Hooked successfully!")
+        return
+    end
+
+    if not hookmetamethod then
+        cout("[Sniffer] Fallback: executor lacks hookmetamethod. Cannot spy.")
+        return
+    end
+
+    cout("[Sniffer] Hooking __namecall as fallback...")
+    local NetworkFolder = game:GetService("ReplicatedStorage"):WaitForChild("Network", 5)
 
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
@@ -293,7 +353,7 @@ function Sniffer.SpyNetwork()
         end
         return oldNamecall(self, ...)
     end)
-    cout("[Sniffer] Spy Hooked. Performing game actions will log remotes here.")
+    cout("[Sniffer] Spy Hooked via __namecall.")
 end
 
 
@@ -413,36 +473,38 @@ UI.LogLayout = nil
 UI.LogCounter = 0
 
 function UI.Log(msg)
-    print(tostring(msg))
+    local text = " " .. tostring(msg)
+    print(text)
     if not UI.LogScroll then return end
     
-    UI.LogCounter = (UI.LogCounter or 0) + 1
-    local lbl = Instance.new("TextLabel")
-    lbl.Name = "LogMsg_" .. UI.LogCounter
-    lbl.Size = UDim2.new(1, -10, 0, 0)
-    lbl.BackgroundTransparency = 1
-    local text = " " .. tostring(msg)
-    lbl.Text = text
-    lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.TextYAlignment = Enum.TextYAlignment.Top
-    lbl.TextSize = 12
-    lbl.Font = Enum.Font.Code
-    lbl.TextWrapped = true
-    lbl.LayoutOrder = UI.LogCounter
-    lbl.Parent = UI.LogScroll
-    
-    -- Mobile executor safe auto-size
-    local bounds = game:GetService("TextService"):GetTextSize(text, 12, Enum.Font.Code, Vector2.new(380, 10000))
-    lbl.Size = UDim2.new(1, -10, 0, bounds.Y + 4)
-    
-    task.spawn(function()
-        task.wait(0.05)
-        if UI.LogLayout and UI.LogScroll then
-            UI.LogScroll.CanvasSize = UDim2.new(0, 0, 0, UI.LogLayout.AbsoluteContentSize.Y + 20)
-            UI.LogScroll.CanvasPosition = Vector2.new(0, UI.LogLayout.AbsoluteContentSize.Y + 1000)
-        end
+    local success, err = pcall(function()
+        UI.LogCounter = (UI.LogCounter or 0) + 1
+        local lbl = Instance.new("TextLabel")
+        lbl.Name = "LogMsg_" .. UI.LogCounter
+        lbl.Size = UDim2.new(1, -10, 0, 0)
+        lbl.AutomaticSize = Enum.AutomaticSize.Y
+        lbl.BackgroundTransparency = 1
+        lbl.Text = text
+        lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.TextYAlignment = Enum.TextYAlignment.Top
+        lbl.TextSize = 12
+        lbl.Font = Enum.Font.Code
+        lbl.TextWrapped = true
+        lbl.LayoutOrder = UI.LogCounter
+        lbl.Parent = UI.LogScroll
+        
+        task.spawn(function()
+            task.wait(0.1)
+            if UI.LogScroll then
+                UI.LogScroll.CanvasPosition = Vector2.new(0, 999999)
+            end
+        end)
     end)
+    
+    if not success then
+        print("[UI.Log Error]", err)
+    end
 end
 
 function UI.Init()
@@ -507,15 +569,11 @@ function UI.Init()
     UI.LogScroll.Position = UDim2.new(0, 10, 0, 140)
     UI.LogScroll.BackgroundColor3 = Color3.fromRGB(12, 14, 18)
     UI.LogScroll.ScrollBarThickness = 4
+    UI.LogScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
     Instance.new("UICorner", UI.LogScroll).CornerRadius = UDim.new(0, 4)
     
     UI.LogLayout = Instance.new("UIListLayout", UI.LogScroll)
     UI.LogLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    
-    UI.LogLayout.GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-        UI.LogScroll.CanvasSize = UDim2.new(0, 0, 0, UI.LogLayout.AbsoluteContentSize.Y)
-        UI.LogScroll.CanvasPosition = Vector2.new(0, UI.LogLayout.AbsoluteContentSize.Y + 100)
-    end)
     
     local active = false
     toggleBtn.MouseButton1Click:Connect(function()

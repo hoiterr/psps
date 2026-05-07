@@ -60,6 +60,18 @@ function Sniffer.DumpSaveData()
     if not data then
         cout("[Sniffer] Trying aggressive scan for active goals...")
         local activeGoals = scanForGoals()
+        
+        -- Lets also dump the local player's attributes just in case
+        local p = game:GetService("Players").LocalPlayer
+        if p then
+            cout(string.format("Player Info: %s (MaxZone/Rank might be on attributes)", p.Name))
+            for k, v in pairs(p:GetAttributes()) do
+                if string.find(string.lower(tostring(k)), "rank") or string.find(string.lower(tostring(k)), "zone") then
+                    cout("Attr -> " .. tostring(k) .. ": " .. tostring(v))
+                end
+            end
+        end
+
         if activeGoals then
             cout("--- ACTIVE GOALS ---")
             local gCount = 0
@@ -105,17 +117,8 @@ function Sniffer.SpyNetwork()
         cout("[Sniffer] Spy already active!")
         return 
     end
-
-    if not hookmetamethod then
-        cout("[Sniffer] Your executor lacks hookmetamethod. Cannot spy.")
-        return
-    end
-
-    cout("[Sniffer] Hooking __namecall to spy on Network...")
     isSpying = true
 
-    local NetworkFolder = game:GetService("ReplicatedStorage"):WaitForChild("Network", 5)
-    
     -- Blacklist extremely spammy remotes to not lag mobile devices
     local Blacklist = {
         ["PlayerPing"] = true,
@@ -126,6 +129,63 @@ function Sniffer.SpyNetwork()
         ["Breakables_MineUpdate"] = true,
         ["Breakables_PlayerInstaMine"] = true
     }
+
+    local Library
+    pcall(function() Library = require(game:GetService("ReplicatedStorage").Library) end)
+    
+    if Library and Library.Network then
+        cout("[Sniffer] Hooking Library.Network module directly (Bypasses executor limits!)")
+        
+        local oldFire = Library.Network.Fire
+        if oldFire then
+            Library.Network.Fire = function(...)
+                local args = {...}
+                local name = tostring(args[1])
+                if not Blacklist[name] then
+                    local strArgs = ""
+                    for i=2, #args do
+                        if type(args[i]) == "table" then
+                            strArgs = strArgs .. "[table], "
+                        else
+                            strArgs = strArgs .. tostring(args[i]) .. ", "
+                        end
+                    end
+                    task.spawn(function() cout(string.format("[Spy-F] %s | %s", name, strArgs)) end)
+                end
+                return oldFire(...)
+            end
+        end
+        
+        local oldInvoke = Library.Network.Invoke
+        if oldInvoke then
+            Library.Network.Invoke = function(...)
+                local args = {...}
+                local name = tostring(args[1])
+                if not Blacklist[name] then
+                    local strArgs = ""
+                    for i=2, #args do
+                        if type(args[i]) == "table" then
+                            strArgs = strArgs .. "[table], "
+                        else
+                            strArgs = strArgs .. tostring(args[i]) .. ", "
+                        end
+                    end
+                    task.spawn(function() cout(string.format("[Spy-I] %s | %s", name, strArgs)) end)
+                end
+                return oldInvoke(...)
+            end
+        end
+        cout("[Sniffer] Module Hooked successfully!")
+        return
+    end
+
+    if not hookmetamethod then
+        cout("[Sniffer] Fallback: executor lacks hookmetamethod. Cannot spy.")
+        return
+    end
+
+    cout("[Sniffer] Hooking __namecall as fallback...")
+    local NetworkFolder = game:GetService("ReplicatedStorage"):WaitForChild("Network", 5)
 
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
@@ -149,7 +209,7 @@ function Sniffer.SpyNetwork()
         end
         return oldNamecall(self, ...)
     end)
-    cout("[Sniffer] Spy Hooked. Performing game actions will log remotes here.")
+    cout("[Sniffer] Spy Hooked via __namecall.")
 end
 
 return Sniffer
