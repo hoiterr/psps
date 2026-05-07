@@ -2,10 +2,12 @@ local UI = {}
 UI.LogScroll = nil
 UI.LogLayout = nil
 UI.LogCounter = 0
+UI.AllLogsText = ""
 
 function UI.Log(msg)
     local text = " " .. tostring(msg)
     print(text)
+    UI.AllLogsText = UI.AllLogsText .. text .. "\n"
     if not UI.LogScroll then return end
     
     local success, err = pcall(function()
@@ -40,15 +42,23 @@ end
 
 function UI.Init()
     local player = game:GetService("Players").LocalPlayer
-    if player.PlayerGui:FindFirstChild("PS99_AutoRankHub") then
-        player.PlayerGui.PS99_AutoRankHub:Destroy()
+    
+    local parentGUI = nil
+    pcall(function() if gethui then parentGUI = gethui() end end)
+    if not parentGUI then pcall(function() parentGUI = game:GetService("CoreGui") end) end
+    if not parentGUI then parentGUI = player:WaitForChild("PlayerGui") end
+
+    if parentGUI:FindFirstChild("PS99_AutoRankHub") then
+        parentGUI.PS99_AutoRankHub:Destroy()
     end
     
     UI.LogCounter = 0
+    UI.AllLogsText = ""
     
-    local gui = Instance.new("ScreenGui", player.PlayerGui)
+    local gui = Instance.new("ScreenGui")
     gui.Name = "PS99_AutoRankHub"
     gui.ResetOnSpawn = false
+    gui.Parent = parentGUI
     
     local frame = Instance.new("Frame", gui)
     frame.Size = UDim2.new(0, 420, 0, 360)
@@ -87,13 +97,22 @@ function UI.Init()
     Instance.new("UICorner", debugBtn).CornerRadius = UDim.new(0, 4)
 
     local spyBtn = Instance.new("TextButton", frame)
-    spyBtn.Size = UDim2.new(1, -20, 0, 30)
+    spyBtn.Size = UDim2.new(0.7, -15, 0, 30)
     spyBtn.Position = UDim2.new(0, 10, 0, 100)
-    spyBtn.Text = "Spy Remotes (Logs to Console Below)"
+    spyBtn.Text = "Spy Remotes"
     spyBtn.BackgroundColor3 = Color3.fromRGB(80, 40, 180)
     spyBtn.TextColor3 = Color3.new(1, 1, 1)
     spyBtn.Font = Enum.Font.GothamBold
     Instance.new("UICorner", spyBtn).CornerRadius = UDim.new(0, 4)
+
+    local copyBtn = Instance.new("TextButton", frame)
+    copyBtn.Size = UDim2.new(0.3, -5, 0, 30)
+    copyBtn.Position = UDim2.new(0.7, 5, 0, 100)
+    copyBtn.Text = "Copy Logs"
+    copyBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 120)
+    copyBtn.TextColor3 = Color3.new(1, 1, 1)
+    copyBtn.Font = Enum.Font.GothamBold
+    Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 4)
     
     UI.LogScroll = Instance.new("ScrollingFrame", frame)
     UI.LogScroll.Size = UDim2.new(1, -20, 1, -150)
@@ -137,6 +156,21 @@ function UI.Init()
         if shared._PS99.Debug and shared._PS99.Debug.Sniffer then
             shared._PS99.Debug.Sniffer.SpyNetwork()
         end
+    end)
+
+    copyBtn.MouseButton1Click:Connect(function()
+        local success = pcall(function()
+            if setclipboard then
+                setclipboard(UI.AllLogsText)
+                UI.Log("Logs copied to clipboard!")
+            elseif toclipboard then
+                toclipboard(UI.AllLogsText)
+                UI.Log("Logs copied to clipboard!")
+            else
+                UI.Log("Executor does not support clipboard copying.")
+            end
+        end)
+        if not success then UI.Log("Failed to copy logs.") end
     end)
     
     UI.Log("UI Initialized. Ready to sniff data!")

@@ -1,18 +1,37 @@
 local Network = {}
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local NetworkFolder = ReplicatedStorage:WaitForChild("Network", 10)
-if not NetworkFolder then
-    warn("[Network] Could not find ReplicatedStorage.Network")
+local NetworkCache = nil
+
+function Network.GetModule()
+    if NetworkCache then return NetworkCache end
+    for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
+        if v:IsA("ModuleScript") and v.Name == "Network" then
+            local success, m = pcall(require, v)
+            if success and type(m) == "table" and (m.Fire or m.Invoke) then
+                NetworkCache = m
+                return m
+            end
+        end
+    end
+    return nil
 end
+
+local NetworkFolder = ReplicatedStorage:WaitForChild("Network", 5)
 
 -- A robust function to fire any remote safely
 function Network.Fire(remoteName, ...)
+    local m = Network.GetModule()
+    if m and m.Fire then
+        return m.Fire(remoteName, ...)
+    elseif m and m.Invoke then
+        return m.Invoke(remoteName, ...)
+    end
+
     if not NetworkFolder then return false end
     
     local remote = NetworkFolder:FindFirstChild(remoteName)
     if not remote then 
-        warn("[Network] Remote not found:", remoteName)
         return false 
     end
     
@@ -34,6 +53,4 @@ function Network.Fire(remoteName, ...)
     return false
 end
 
--- Big Games typically uses a generic FireEvent or Invoke method for some systems.
--- Some scripts use require() on their Network module, this allows us to hook easily in the future.
 return Network

@@ -13,13 +13,23 @@ function Sniffer.DumpSaveData()
     
     local data = nil
     
-    -- Attempt 1: Direct Library require (Most common standard in Pet Sim)
-    local success, Library = pcall(function() return require(game:GetService("ReplicatedStorage").Library) end)
-    if success and type(Library) == "table" and Library.Save and Library.Save.Get then
-        local suc, res = pcall(function() return Library.Save.Get() end)
-        if suc and res and type(res) == "table" then
-            data = res
+    local foundSave = false
+    -- Attempt 1: Dynamic Module Search
+    for _, v in pairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+        if v:IsA("ModuleScript") and v.Name == "Save" then
+            pcall(function()
+                local m = require(v)
+                if type(m) == "table" and m.Get then
+                    local suc, res = pcall(function() return m.Get() end)
+                    if suc and type(res) == "table" and res.Goals then
+                        data = res
+                        foundSave = true
+                        cout("-> Found true Save module at: " .. v:GetFullName())
+                    end
+                end
+            end)
         end
+        if foundSave then break end
     end
     
     -- Attempt 2: GC (Garbage Collection) Scan
@@ -77,8 +87,10 @@ function Sniffer.DumpSaveData()
             local gCount = 0
             for id, goal in pairs(activeGoals) do
                 gCount = gCount + 1
-                cout(string.format("ID: %s | Type: %s | Prog: %s/%s", 
-                    tostring(id), tostring(goal.Type), tostring(goal.Progress or 0), tostring(goal.Amount or goal.Goal or "?")))
+                cout(string.format("--- ID: %s ---", tostring(id)))
+                for k,v in pairs(goal) do
+                    cout(string.format("  %s: %s", tostring(k), tostring(v)))
+                end
             end
             if gCount == 0 then cout("Found goals object but it is empty.") end
             cout("======================================")
@@ -97,13 +109,10 @@ function Sniffer.DumpSaveData()
     local goalCount = 0
     for id, goal in pairs(goals) do
         goalCount = goalCount + 1
-        cout(string.format("ID: %s | Type: %s | Progress: %s/%s | Stars: %s", 
-            tostring(id), 
-            tostring(goal.Type), 
-            tostring(goal.Progress or 0), 
-            tostring(goal.Amount or goal.Goal or "?"), 
-            tostring(goal.Stars or "?")
-        ))
+        cout(string.format("--- ID: %s ---", tostring(id)))
+        for k,v in pairs(goal) do
+            cout(string.format("  %s: %s", tostring(k), tostring(v)))
+        end
     end
     if goalCount == 0 then
         cout("No active goals found in SaveData.")
@@ -119,6 +128,8 @@ function Sniffer.SpyNetwork()
     end
     isSpying = true
 
+    cout("[Sniffer] Scanning ReplicatedStorage for Network/Save modules...")
+
     -- Blacklist extremely spammy remotes to not lag mobile devices
     local Blacklist = {
         ["PlayerPing"] = true,
@@ -130,86 +141,64 @@ function Sniffer.SpyNetwork()
         ["Breakables_PlayerInstaMine"] = true
     }
 
-    local Library
-    pcall(function() Library = require(game:GetService("ReplicatedStorage").Library) end)
-    
-    if Library and Library.Network then
-        cout("[Sniffer] Hooking Library.Network module directly (Bypasses executor limits!)")
-        
-        local oldFire = Library.Network.Fire
-        if oldFire then
-            Library.Network.Fire = function(...)
-                local args = {...}
-                local name = tostring(args[1])
-                if not Blacklist[name] then
-                    local strArgs = ""
-                    for i=2, #args do
-                        if type(args[i]) == "table" then
-                            strArgs = strArgs .. "[table], "
-                        else
-                            strArgs = strArgs .. tostring(args[i]) .. ", "
+    local foundNet = false
+    pcall(function()
+        for _, v in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+            if v:IsA("ModuleScript") and v.Name == "Network" then
+                local success, m = pcall(require, v)
+                if success and type(m) == "table" and (m.Fire or m.Invoke) then
+                    cout("-> Hooked Network Module at: " .. v:GetFullName())
+                    foundNet = true
+                    if m.Fire then
+                        local oldF = m.Fire
+                        m.Fire = function(...)
+                            local args = {...}
+                            local name = tostring(args[1])
+                            if not Blacklist[name] then
+                                task.spawn(function() cout("[Net.Fire] " .. name .. " | arg#: " .. tostring(#args - 1)) end)
+                            end
+                            return oldF(...)
                         end
                     end
-                    task.spawn(function() cout(string.format("[Spy-F] %s | %s", name, strArgs)) end)
-                end
-                return oldFire(...)
-            end
-        end
-        
-        local oldInvoke = Library.Network.Invoke
-        if oldInvoke then
-            Library.Network.Invoke = function(...)
-                local args = {...}
-                local name = tostring(args[1])
-                if not Blacklist[name] then
-                    local strArgs = ""
-                    for i=2, #args do
-                        if type(args[i]) == "table" then
-                            strArgs = strArgs .. "[table], "
-                        else
-                            strArgs = strArgs .. tostring(args[i]) .. ", "
+                    if m.Invoke then
+                        local oldI = m.Invoke
+                        m.Invoke = function(...)
+                            local args = {...}
+                            local name = tostring(args[1])
+                            if not Blacklist[name] then
+                                task.spawn(function() cout("[Net.Invoke] " .. name .. " | arg#: " .. tostring(#args - 1)) end)
+                            end
+                            return oldI(...)
                         end
                     end
-                    task.spawn(function() cout(string.format("[Spy-I] %s | %s", name, strArgs)) end)
+                    break
                 end
-                return oldInvoke(...)
             end
         end
-        cout("[Sniffer] Module Hooked successfully!")
-        return
-    end
-
-    if not hookmetamethod then
-        cout("[Sniffer] Fallback: executor lacks hookmetamethod. Cannot spy.")
-        return
-    end
-
-    cout("[Sniffer] Hooking __namecall as fallback...")
-    local NetworkFolder = game:GetService("ReplicatedStorage"):WaitForChild("Network", 5)
-
-    local oldNamecall
-    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        if not checkcaller() and (method == "FireServer" or method == "InvokeServer") then
-            if typeof(self) == "Instance" and not Blacklist[self.Name] then
-                local args = {...}
-                local strArgs = ""
-                for i, v in ipairs(args) do
-                    if type(v) == "table" then
-                        strArgs = strArgs .. "[table]" .. (i < #args and ", " or "")
-                    else
-                        strArgs = strArgs .. tostring(v) .. (i < #args and ", " or "")
-                    end
-                end
-                local name = self.Name
-                task.spawn(function()
-                    cout(string.format("[Spy] %s | %s", name, strArgs))
-                end)
-            end
-        end
-        return oldNamecall(self, ...)
     end)
-    cout("[Sniffer] Spy Hooked via __namecall.")
+
+    if not foundNet then
+        cout("[Sniffer] Failed to hook module. Hooking __namecall as fallback...")
+        if not hookmetamethod then return end
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            if method == "FireServer" or method == "InvokeServer" then
+                if typeof(self) == "Instance" and not Blacklist[self.Name] then
+                    local args = {...}
+                    local strArgs = ""
+                    for i, v in ipairs(args) do
+                        if type(v) == "table" then strArgs = strArgs .. "[table], " else strArgs = strArgs .. tostring(v) .. ", " end
+                    end
+                    local name = tostring(self.Name)
+                    task.spawn(function()
+                        cout(string.format("[Spy] %s | %s", name, strArgs))
+                    end)
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+    end
 end
 
 return Sniffer

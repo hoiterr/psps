@@ -10,7 +10,7 @@ const files = [
     'src/ui/window.lua'
 ];
 
-let bundle = 'shared._PS99 = shared._PS99 or { Core = {}, Features = {}, UI = {}, Debug = {} }\n\n';
+let bundle = 'repeat task.wait() until game:IsLoaded()\nshared._PS99 = shared._PS99 or { Core = {}, Features = {}, UI = {}, Debug = {} }\n\n';
 
 for (const file of files) {
     let content = fs.readFileSync(file, 'utf8');

@@ -1,36 +1,38 @@
 local SaveData = {}
 
--- [[ Save Data Scraper ]]
--- In PS99, the LocalPlayer's save data contains everything (Quest progress, inventory, ranks).
--- It is usually managed by a ModuleScript called "Save" inside ReplicatedStorage.Library.Client
--- However, getting it via GC (Garbage Collection) is the most robust method for exploits.
+local SaveModuleCache = nil
 
 local function GetSaveData()
+    if SaveModuleCache then
+        local suc, res = pcall(function() return SaveModuleCache.Get() end)
+        if suc and res and type(res) == "table" then return res end
+    end
+
+    for _, v in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+        if v:IsA("ModuleScript") and v.Name == "Save" then
+            pcall(function()
+                local m = require(v)
+                if type(m) == "table" and m.Get then
+                    local suc, res = pcall(function() return m.Get() end)
+                    if suc and type(res) == "table" and res.Goals then
+                        SaveModuleCache = m
+                        return res
+                    end
+                end
+            end)
+        end
+        if SaveModuleCache then
+            local suc, res = pcall(function() return SaveModuleCache.Get() end)
+            if suc and res and type(res) == "table" then return res end
+        end
+    end
+    
     local gc = getgc and getgc(true) or {}
     for _, v in ipairs(gc) do
-        if type(v) == "table" and rawget(v, "Save") then
-            -- We are looking for a table that has goals/quests in it, or is the main overarching save
-            if type(v.Save) == "table" and rawget(v.Save, "Get") then
-                -- Some frameworks use Library.Save.Get()
-                local success, data = pcall(function() return v.Save.Get() end)
-                if success and type(data) == "table" and data.Goals then
-                    return data
-                end
-            end
-        end
-        -- Fallback: Look for a table that straight up has "Goals" or "Rank" fields
         if type(v) == "table" and rawget(v, "Goals") and rawget(v, "Rank") then
             return v
         end
     end
-    
-    -- Fallback 2: require the library directly
-    pcall(function()
-        local lib = require(game:GetService("ReplicatedStorage").Library)
-        if lib and lib.Save and lib.Save.Get then
-            return lib.Save.Get()
-        end
-    end)
     
     return nil
 end

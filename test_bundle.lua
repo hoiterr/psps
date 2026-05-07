@@ -1,3 +1,4 @@
+repeat task.wait() until game:IsLoaded()
 shared._PS99 = shared._PS99 or { Core = {}, Features = {}, UI = {}, Debug = {} }
 
 do
@@ -33,18 +34,37 @@ do
 local Network = {}
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local NetworkFolder = ReplicatedStorage:WaitForChild("Network", 10)
-if not NetworkFolder then
-    warn("[Network] Could not find ReplicatedStorage.Network")
+local NetworkCache = nil
+
+function Network.GetModule()
+    if NetworkCache then return NetworkCache end
+    for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
+        if v:IsA("ModuleScript") and v.Name == "Network" then
+            local success, m = pcall(require, v)
+            if success and type(m) == "table" and (m.Fire or m.Invoke) then
+                NetworkCache = m
+                return m
+            end
+        end
+    end
+    return nil
 end
+
+local NetworkFolder = ReplicatedStorage:WaitForChild("Network", 5)
 
 -- A robust function to fire any remote safely
 function Network.Fire(remoteName, ...)
+    local m = Network.GetModule()
+    if m and m.Fire then
+        return m.Fire(remoteName, ...)
+    elseif m and m.Invoke then
+        return m.Invoke(remoteName, ...)
+    end
+
     if not NetworkFolder then return false end
     
     local remote = NetworkFolder:FindFirstChild(remoteName)
     if not remote then 
-        warn("[Network] Remote not found:", remoteName)
         return false 
     end
     
@@ -66,8 +86,6 @@ function Network.Fire(remoteName, ...)
     return false
 end
 
--- Big Games typically uses a generic FireEvent or Invoke method for some systems.
--- Some scripts use require() on their Network module, this allows us to hook easily in the future.
 
 
     shared._PS99.Core.Network = Network
@@ -76,37 +94,39 @@ end
 do
 local SaveData = {}
 
--- [[ Save Data Scraper ]]
--- In PS99, the LocalPlayer's save data contains everything (Quest progress, inventory, ranks).
--- It is usually managed by a ModuleScript called "Save" inside ReplicatedStorage.Library.Client
--- However, getting it via GC (Garbage Collection) is the most robust method for exploits.
+local SaveModuleCache = nil
 
 local function GetSaveData()
+    if SaveModuleCache then
+        local suc, res = pcall(function() return SaveModuleCache.Get() end)
+        if suc and res and type(res) == "table" then return res end
+    end
+
+    for _, v in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+        if v:IsA("ModuleScript") and v.Name == "Save" then
+            pcall(function()
+                local m = require(v)
+                if type(m) == "table" and m.Get then
+                    local suc, res = pcall(function() return m.Get() end)
+                    if suc and type(res) == "table" and res.Goals then
+                        SaveModuleCache = m
+                        return res
+                    end
+                end
+            end)
+        end
+        if SaveModuleCache then
+            local suc, res = pcall(function() return SaveModuleCache.Get() end)
+            if suc and res and type(res) == "table" then return res end
+        end
+    end
+    
     local gc = getgc and getgc(true) or {}
     for _, v in ipairs(gc) do
-        if type(v) == "table" and rawget(v, "Save") then
-            -- We are looking for a table that has goals/quests in it, or is the main overarching save
-            if type(v.Save) == "table" and rawget(v.Save, "Get") then
-                -- Some frameworks use Library.Save.Get()
-                local success, data = pcall(function() return v.Save.Get() end)
-                if success and type(data) == "table" and data.Goals then
-                    return data
-                end
-            end
-        end
-        -- Fallback: Look for a table that straight up has "Goals" or "Rank" fields
         if type(v) == "table" and rawget(v, "Goals") and rawget(v, "Rank") then
             return v
         end
     end
-    
-    -- Fallback 2: require the library directly
-    pcall(function()
-        local lib = require(game:GetService("ReplicatedStorage").Library)
-        if lib and lib.Save and lib.Save.Get then
-            return lib.Save.Get()
-        end
-    end)
     
     return nil
 end
@@ -157,13 +177,23 @@ function Sniffer.DumpSaveData()
     
     local data = nil
     
-    -- Attempt 1: Direct Library require (Most common standard in Pet Sim)
-    local success, Library = pcall(function() return require(game:GetService("ReplicatedStorage").Library) end)
-    if success and type(Library) == "table" and Library.Save and Library.Save.Get then
-        local suc, res = pcall(function() return Library.Save.Get() end)
-        if suc and res and type(res) == "table" then
-            data = res
+    local foundSave = false
+    -- Attempt 1: Dynamic Module Search
+    for _, v in pairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+        if v:IsA("ModuleScript") and v.Name == "Save" then
+            pcall(function()
+                local m = require(v)
+                if type(m) == "table" and m.Get then
+                    local suc, res = pcall(function() return m.Get() end)
+                    if suc and type(res) == "table" and res.Goals then
+                        data = res
+                        foundSave = true
+                        cout("-> Found true Save module at: " .. v:GetFullName())
+                    end
+                end
+            end)
         end
+        if foundSave then break end
     end
     
     -- Attempt 2: GC (Garbage Collection) Scan
@@ -221,8 +251,10 @@ function Sniffer.DumpSaveData()
             local gCount = 0
             for id, goal in pairs(activeGoals) do
                 gCount = gCount + 1
-                cout(string.format("ID: %s | Type: %s | Prog: %s/%s", 
-                    tostring(id), tostring(goal.Type), tostring(goal.Progress or 0), tostring(goal.Amount or goal.Goal or "?")))
+                cout(string.format("--- ID: %s ---", tostring(id)))
+                for k,v in pairs(goal) do
+                    cout(string.format("  %s: %s", tostring(k), tostring(v)))
+                end
             end
             if gCount == 0 then cout("Found goals object but it is empty.") end
             cout("======================================")
@@ -241,13 +273,10 @@ function Sniffer.DumpSaveData()
     local goalCount = 0
     for id, goal in pairs(goals) do
         goalCount = goalCount + 1
-        cout(string.format("ID: %s | Type: %s | Progress: %s/%s | Stars: %s", 
-            tostring(id), 
-            tostring(goal.Type), 
-            tostring(goal.Progress or 0), 
-            tostring(goal.Amount or goal.Goal or "?"), 
-            tostring(goal.Stars or "?")
-        ))
+        cout(string.format("--- ID: %s ---", tostring(id)))
+        for k,v in pairs(goal) do
+            cout(string.format("  %s: %s", tostring(k), tostring(v)))
+        end
     end
     if goalCount == 0 then
         cout("No active goals found in SaveData.")
@@ -263,6 +292,8 @@ function Sniffer.SpyNetwork()
     end
     isSpying = true
 
+    cout("[Sniffer] Scanning ReplicatedStorage for Network/Save modules...")
+
     -- Blacklist extremely spammy remotes to not lag mobile devices
     local Blacklist = {
         ["PlayerPing"] = true,
@@ -274,86 +305,64 @@ function Sniffer.SpyNetwork()
         ["Breakables_PlayerInstaMine"] = true
     }
 
-    local Library
-    pcall(function() Library = require(game:GetService("ReplicatedStorage").Library) end)
-    
-    if Library and Library.Network then
-        cout("[Sniffer] Hooking Library.Network module directly (Bypasses executor limits!)")
-        
-        local oldFire = Library.Network.Fire
-        if oldFire then
-            Library.Network.Fire = function(...)
-                local args = {...}
-                local name = tostring(args[1])
-                if not Blacklist[name] then
-                    local strArgs = ""
-                    for i=2, #args do
-                        if type(args[i]) == "table" then
-                            strArgs = strArgs .. "[table], "
-                        else
-                            strArgs = strArgs .. tostring(args[i]) .. ", "
+    local foundNet = false
+    pcall(function()
+        for _, v in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+            if v:IsA("ModuleScript") and v.Name == "Network" then
+                local success, m = pcall(require, v)
+                if success and type(m) == "table" and (m.Fire or m.Invoke) then
+                    cout("-> Hooked Network Module at: " .. v:GetFullName())
+                    foundNet = true
+                    if m.Fire then
+                        local oldF = m.Fire
+                        m.Fire = function(...)
+                            local args = {...}
+                            local name = tostring(args[1])
+                            if not Blacklist[name] then
+                                task.spawn(function() cout("[Net.Fire] " .. name .. " | arg#: " .. tostring(#args - 1)) end)
+                            end
+                            return oldF(...)
                         end
                     end
-                    task.spawn(function() cout(string.format("[Spy-F] %s | %s", name, strArgs)) end)
-                end
-                return oldFire(...)
-            end
-        end
-        
-        local oldInvoke = Library.Network.Invoke
-        if oldInvoke then
-            Library.Network.Invoke = function(...)
-                local args = {...}
-                local name = tostring(args[1])
-                if not Blacklist[name] then
-                    local strArgs = ""
-                    for i=2, #args do
-                        if type(args[i]) == "table" then
-                            strArgs = strArgs .. "[table], "
-                        else
-                            strArgs = strArgs .. tostring(args[i]) .. ", "
+                    if m.Invoke then
+                        local oldI = m.Invoke
+                        m.Invoke = function(...)
+                            local args = {...}
+                            local name = tostring(args[1])
+                            if not Blacklist[name] then
+                                task.spawn(function() cout("[Net.Invoke] " .. name .. " | arg#: " .. tostring(#args - 1)) end)
+                            end
+                            return oldI(...)
                         end
                     end
-                    task.spawn(function() cout(string.format("[Spy-I] %s | %s", name, strArgs)) end)
+                    break
                 end
-                return oldInvoke(...)
             end
         end
-        cout("[Sniffer] Module Hooked successfully!")
-        return
-    end
-
-    if not hookmetamethod then
-        cout("[Sniffer] Fallback: executor lacks hookmetamethod. Cannot spy.")
-        return
-    end
-
-    cout("[Sniffer] Hooking __namecall as fallback...")
-    local NetworkFolder = game:GetService("ReplicatedStorage"):WaitForChild("Network", 5)
-
-    local oldNamecall
-    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        if not checkcaller() and (method == "FireServer" or method == "InvokeServer") then
-            if typeof(self) == "Instance" and not Blacklist[self.Name] then
-                local args = {...}
-                local strArgs = ""
-                for i, v in ipairs(args) do
-                    if type(v) == "table" then
-                        strArgs = strArgs .. "[table]" .. (i < #args and ", " or "")
-                    else
-                        strArgs = strArgs .. tostring(v) .. (i < #args and ", " or "")
-                    end
-                end
-                local name = self.Name
-                task.spawn(function()
-                    cout(string.format("[Spy] %s | %s", name, strArgs))
-                end)
-            end
-        end
-        return oldNamecall(self, ...)
     end)
-    cout("[Sniffer] Spy Hooked via __namecall.")
+
+    if not foundNet then
+        cout("[Sniffer] Failed to hook module. Hooking __namecall as fallback...")
+        if not hookmetamethod then return end
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            if method == "FireServer" or method == "InvokeServer" then
+                if typeof(self) == "Instance" and not Blacklist[self.Name] then
+                    local args = {...}
+                    local strArgs = ""
+                    for i, v in ipairs(args) do
+                        if type(v) == "table" then strArgs = strArgs .. "[table], " else strArgs = strArgs .. tostring(v) .. ", " end
+                    end
+                    local name = tostring(self.Name)
+                    task.spawn(function()
+                        cout(string.format("[Spy] %s | %s", name, strArgs))
+                    end)
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+    end
 end
 
 
@@ -471,10 +480,12 @@ local UI = {}
 UI.LogScroll = nil
 UI.LogLayout = nil
 UI.LogCounter = 0
+UI.AllLogsText = ""
 
 function UI.Log(msg)
     local text = " " .. tostring(msg)
     print(text)
+    UI.AllLogsText = UI.AllLogsText .. text .. "\n"
     if not UI.LogScroll then return end
     
     local success, err = pcall(function()
@@ -509,15 +520,23 @@ end
 
 function UI.Init()
     local player = game:GetService("Players").LocalPlayer
-    if player.PlayerGui:FindFirstChild("PS99_AutoRankHub") then
-        player.PlayerGui.PS99_AutoRankHub:Destroy()
+    
+    local parentGUI = nil
+    pcall(function() if gethui then parentGUI = gethui() end end)
+    if not parentGUI then pcall(function() parentGUI = game:GetService("CoreGui") end) end
+    if not parentGUI then parentGUI = player:WaitForChild("PlayerGui") end
+
+    if parentGUI:FindFirstChild("PS99_AutoRankHub") then
+        parentGUI.PS99_AutoRankHub:Destroy()
     end
     
     UI.LogCounter = 0
+    UI.AllLogsText = ""
     
-    local gui = Instance.new("ScreenGui", player.PlayerGui)
+    local gui = Instance.new("ScreenGui")
     gui.Name = "PS99_AutoRankHub"
     gui.ResetOnSpawn = false
+    gui.Parent = parentGUI
     
     local frame = Instance.new("Frame", gui)
     frame.Size = UDim2.new(0, 420, 0, 360)
@@ -556,13 +575,22 @@ function UI.Init()
     Instance.new("UICorner", debugBtn).CornerRadius = UDim.new(0, 4)
 
     local spyBtn = Instance.new("TextButton", frame)
-    spyBtn.Size = UDim2.new(1, -20, 0, 30)
+    spyBtn.Size = UDim2.new(0.7, -15, 0, 30)
     spyBtn.Position = UDim2.new(0, 10, 0, 100)
-    spyBtn.Text = "Spy Remotes (Logs to Console Below)"
+    spyBtn.Text = "Spy Remotes"
     spyBtn.BackgroundColor3 = Color3.fromRGB(80, 40, 180)
     spyBtn.TextColor3 = Color3.new(1, 1, 1)
     spyBtn.Font = Enum.Font.GothamBold
     Instance.new("UICorner", spyBtn).CornerRadius = UDim.new(0, 4)
+
+    local copyBtn = Instance.new("TextButton", frame)
+    copyBtn.Size = UDim2.new(0.3, -5, 0, 30)
+    copyBtn.Position = UDim2.new(0.7, 5, 0, 100)
+    copyBtn.Text = "Copy Logs"
+    copyBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 120)
+    copyBtn.TextColor3 = Color3.new(1, 1, 1)
+    copyBtn.Font = Enum.Font.GothamBold
+    Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 4)
     
     UI.LogScroll = Instance.new("ScrollingFrame", frame)
     UI.LogScroll.Size = UDim2.new(1, -20, 1, -150)
@@ -606,6 +634,21 @@ function UI.Init()
         if shared._PS99.Debug and shared._PS99.Debug.Sniffer then
             shared._PS99.Debug.Sniffer.SpyNetwork()
         end
+    end)
+
+    copyBtn.MouseButton1Click:Connect(function()
+        local success = pcall(function()
+            if setclipboard then
+                setclipboard(UI.AllLogsText)
+                UI.Log("Logs copied to clipboard!")
+            elseif toclipboard then
+                toclipboard(UI.AllLogsText)
+                UI.Log("Logs copied to clipboard!")
+            else
+                UI.Log("Executor does not support clipboard copying.")
+            end
+        end)
+        if not success then UI.Log("Failed to copy logs.") end
     end)
     
     UI.Log("UI Initialized. Ready to sniff data!")
