@@ -135,7 +135,7 @@ function UI.Init()
             UI.Log("Started AutoRank loop...")
             task.spawn(function()
                 while active and task.wait(1) do
-                    local ok = pcall(function()
+                    pcall(function()
                         if shared._PS99.Features and shared._PS99.Features.QuestManager then
                             if shared._PS99.Features.QuestManager.AutoCompleteQuests then
                                 shared._PS99.Features.QuestManager.AutoCompleteQuests()
@@ -145,9 +145,6 @@ function UI.Init()
                             end
                         end
                     end)
-                    if not ok then
-                        UI.Log("AutoRank loop error (modules not ready)")
-                    end
                 end
             end)
         else
@@ -164,31 +161,42 @@ function UI.Init()
     end)
 
     spyBtn.MouseButton1Click:Connect(function()
-        if shared._PS99.Debug and shared._PS99.Debug.Sniffer then
-            if shared._PS99.Debug.Sniffer.SpyNetwork then
-                shared._PS99.Debug.Sniffer.SpyNetwork()
-            else
-                UI.Log("Remote spy not implemented yet")
+        pcall(function()
+            UI.Log("=== Remote Spy ===")
+            local found = 0
+            for _, obj in pairs(getgc(true)) do
+                if type(obj) == "table" then
+                    for k, v in pairs(obj) do
+                        if typeof(v) == "RemoteEvent" or typeof(v) == "RemoteFunction" or typeof(v) == "UnreliableRemoteEvent" then
+                            found = found + 1
+                            UI.Log("  [" .. tostring(k) .. "] -> " .. v.ClassName .. " : " .. v.Parent:GetFullName())
+                        end
+                    end
+                end
             end
-        end
+            -- Also scan ReplicatedStorage directly
+            local rs = game:GetService("ReplicatedStorage")
+            for _, remote in ipairs(rs:GetDescendants()) do
+                if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
+                    found = found + 1
+                    UI.Log("  " .. remote.ClassName .. " : " .. remote:GetFullName())
+                end
+            end
+            UI.Log("Found " .. found .. " remotes total")
+        end)
     end)
 
     copyBtn.MouseButton1Click:Connect(function()
-        local success = pcall(function()
+        pcall(function()
             local text = UI.AllLogsText
             if syn and syn.clipboard then syn.clipboard.set(text)
             elseif clipboard and clipboard.set then clipboard.set(text)
             elseif setclipboard then setclipboard(text)
             elseif toclipboard then toclipboard(text)
             elseif writeclipboard then writeclipboard(text)
-            else
-                error("no clipboard method")
-            end
+            else error("no clipboard method") end
             UI.Log("Logs copied to clipboard!")
         end)
-        if not success then
-            UI.Log("Executor does not support clipboard copying.")
-        end
     end)
     
     UI.Log("UI Initialized. Ready to sniff data!")
