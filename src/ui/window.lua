@@ -135,9 +135,18 @@ function UI.Init()
             UI.Log("Started AutoRank loop...")
             task.spawn(function()
                 while active and task.wait(1) do
-                    if shared._PS99.Features and shared._PS99.Features.QuestManager then
-                        shared._PS99.Features.QuestManager.AutoCompleteQuests()
-                        shared._PS99.Features.QuestManager.CheckRankUp()
+                    local ok = pcall(function()
+                        if shared._PS99.Features and shared._PS99.Features.QuestManager then
+                            if shared._PS99.Features.QuestManager.AutoCompleteQuests then
+                                shared._PS99.Features.QuestManager.AutoCompleteQuests()
+                            end
+                            if shared._PS99.Features.QuestManager.CheckRankUp then
+                                shared._PS99.Features.QuestManager.CheckRankUp()
+                            end
+                        end
+                    end)
+                    if not ok then
+                        UI.Log("AutoRank loop error (modules not ready)")
                     end
                 end
             end)
@@ -148,29 +157,38 @@ function UI.Init()
 
     debugBtn.MouseButton1Click:Connect(function()
         if shared._PS99.Debug and shared._PS99.Debug.Sniffer then
-            shared._PS99.Debug.Sniffer.DumpSaveData()
+            shared._PS99.Debug.Sniffer.FullScan()
+        else
+            UI.Log("Sniffer not loaded!")
         end
     end)
 
     spyBtn.MouseButton1Click:Connect(function()
         if shared._PS99.Debug and shared._PS99.Debug.Sniffer then
-            shared._PS99.Debug.Sniffer.SpyNetwork()
+            if shared._PS99.Debug.Sniffer.SpyNetwork then
+                shared._PS99.Debug.Sniffer.SpyNetwork()
+            else
+                UI.Log("Remote spy not implemented yet")
+            end
         end
     end)
 
     copyBtn.MouseButton1Click:Connect(function()
         local success = pcall(function()
-            if setclipboard then
-                setclipboard(UI.AllLogsText)
-                UI.Log("Logs copied to clipboard!")
-            elseif toclipboard then
-                toclipboard(UI.AllLogsText)
-                UI.Log("Logs copied to clipboard!")
+            local text = UI.AllLogsText
+            if syn and syn.clipboard then syn.clipboard.set(text)
+            elseif clipboard and clipboard.set then clipboard.set(text)
+            elseif setclipboard then setclipboard(text)
+            elseif toclipboard then toclipboard(text)
+            elseif writeclipboard then writeclipboard(text)
             else
-                UI.Log("Executor does not support clipboard copying.")
+                error("no clipboard method")
             end
+            UI.Log("Logs copied to clipboard!")
         end)
-        if not success then UI.Log("Failed to copy logs.") end
+        if not success then
+            UI.Log("Executor does not support clipboard copying.")
+        end
     end)
     
     UI.Log("UI Initialized. Ready to sniff data!")
