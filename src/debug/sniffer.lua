@@ -120,6 +120,27 @@ function Sniffer.ParseSource(source, label)
     return parsed
 end
 
+if success and type(saveModule) == "table" then
+        local ok, saveData = pcall(function() return saveModule.Get() end)
+        if ok and type(saveData) == "table" then
+            cout("SUCCESS - got save data via direct require!")
+            -- Try ValueExtractor directly first for diagnostics
+            local ValueExtractor = shared._PS99.Core.ValueExtractor
+            if ValueExtractor then
+                local result = ValueExtractor.Normalize(saveData)
+                printLines(ValueExtractor.FormatSummary(result))
+            else
+                cout("ValueExtractor not available, dumping raw keys:")
+                for k, v in pairs(saveData) do
+                    cout("  [" .. tostring(k) .. "] = " .. type(v))
+                end
+            end
+            -- Also cache via SaveData
+            SaveData.SetSource(saveData)
+            return result
+        end
+    end
+
 function Sniffer.DumpCurrentData()
     return Sniffer.ParseSource(SaveData.GetRawSource() or {}, "current")
 end
