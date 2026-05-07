@@ -31,7 +31,13 @@ shared._PS99.UI = loadModule("/src/ui/window.lua")
 
 -- Autostart UI
 if shared._PS99.UI and shared._PS99.UI.Init then
-    shared._PS99.UI.Init()
+    shared._PS99.UI.Init
+
+-- Add this after the other loads in loader.lua
+-- Sniffer is already loaded, but also try direct require
+shared._PS99.FullScan = function()
+    return shared._PS99.Debug.Sniffer.FullScan()
+
 end
 
 print("[PS99 Loader] Loaded successfully!")
