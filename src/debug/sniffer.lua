@@ -36,14 +36,43 @@ function Sniffer.DumpSaveData()
                 end
             end
             -- Fallbacks
-            if type(v) == "table" and rawget(v, "Goals") and rawget(v, "Rank") then
+            if type(v) == "table" and rawget(v, "Goals") and rawget(v, "uid") then
                 data = v
                 break
             end
         end
     end
 
+    local function scanForGoals()
+        local gc = getgc and getgc(true) or {}
+        for _, v in ipairs(gc) do
+            if type(v) == "table" and rawget(v, "Goals") and type(rawget(v, "Goals")) == "table" then
+                for id, goal in pairs(rawget(v, "Goals")) do
+                    if type(goal) == "table" and rawget(goal, "Type") then
+                        return rawget(v, "Goals")
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
     if not data then
+        cout("[Sniffer] Trying aggressive scan for active goals...")
+        local activeGoals = scanForGoals()
+        if activeGoals then
+            cout("--- ACTIVE GOALS ---")
+            local gCount = 0
+            for id, goal in pairs(activeGoals) do
+                gCount = gCount + 1
+                cout(string.format("ID: %s | Type: %s | Prog: %s/%s", 
+                    tostring(id), tostring(goal.Type), tostring(goal.Progress or 0), tostring(goal.Amount or goal.Goal or "?")))
+            end
+            if gCount == 0 then cout("Found goals object but it is empty.") end
+            cout("======================================")
+            return
+        end
+
         cout("[Sniffer] Could not find SaveData via Library or GC!")
         return
     end
@@ -102,7 +131,7 @@ function Sniffer.SpyNetwork()
     oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         local method = getnamecallmethod()
         if not checkcaller() and (method == "FireServer" or method == "InvokeServer") then
-            if self:IsDescendantOf(NetworkFolder) and not Blacklist[self.Name] then
+            if typeof(self) == "Instance" and not Blacklist[self.Name] then
                 local args = {...}
                 local strArgs = ""
                 for i, v in ipairs(args) do
@@ -112,7 +141,10 @@ function Sniffer.SpyNetwork()
                         strArgs = strArgs .. tostring(v) .. (i < #args and ", " or "")
                     end
                 end
-                cout(string.format("[Spy] %s | %s", self.Name, strArgs))
+                local name = self.Name
+                task.spawn(function()
+                    cout(string.format("[Spy] %s | %s", name, strArgs))
+                end)
             end
         end
         return oldNamecall(self, ...)

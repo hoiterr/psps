@@ -4,13 +4,14 @@ UI.LogLayout = nil
 UI.LogCounter = 0
 
 function UI.Log(msg)
-    print(msg)
+    print(tostring(msg))
     if not UI.LogScroll then return end
     
-    UI.LogCounter = UI.LogCounter + 1
+    UI.LogCounter = (UI.LogCounter or 0) + 1
     local lbl = Instance.new("TextLabel")
     lbl.Name = "LogMsg_" .. UI.LogCounter
-    lbl.Size = UDim2.new(1, -10, 0, 16)
+    lbl.Size = UDim2.new(1, -10, 0, 0)
+    lbl.AutomaticSize = Enum.AutomaticSize.Y
     lbl.BackgroundTransparency = 1
     lbl.Text = " " .. tostring(msg)
     lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
@@ -22,15 +23,11 @@ function UI.Log(msg)
     lbl.LayoutOrder = UI.LogCounter
     lbl.Parent = UI.LogScroll
     
-    -- Auto adjust size based on text
-    local textBounds = game:GetService("TextService"):GetTextSize(lbl.Text, 12, Enum.Font.Code, Vector2.new(UI.LogScroll.AbsoluteSize.X - 10, 10000))
-    lbl.Size = UDim2.new(1, -10, 0, textBounds.Y + 4)
-
     task.spawn(function()
         task.wait(0.05)
         if UI.LogLayout and UI.LogScroll then
             UI.LogScroll.CanvasSize = UDim2.new(0, 0, 0, UI.LogLayout.AbsoluteContentSize.Y + 20)
-            UI.LogScroll.CanvasPosition = Vector2.new(0, UI.LogLayout.AbsoluteContentSize.Y)
+            UI.LogScroll.CanvasPosition = Vector2.new(0, UI.LogLayout.AbsoluteContentSize.Y + 1000)
         end
     end)
 end
