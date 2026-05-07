@@ -17,6 +17,11 @@ shared._PS99.Core.Utils = loadModule("/src/core/utils.lua")
 shared._PS99.Core.Network = loadModule("/src/core/network.lua")
 shared._PS99.Core.SaveData = loadModule("/src/core/savedata.lua")
 
+-- Load Debug Tools
+shared._PS99.Debug = {
+    Sniffer = loadModule("/src/debug/sniffer.lua")
+}
+
 -- Load Features
 shared._PS99.Features.QuestManager = loadModule("/src/features/quest_manager.lua")
 shared._PS99.Features.Farming = loadModule("/src/features/farming.lua")

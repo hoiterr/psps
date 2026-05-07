@@ -24,9 +24,14 @@ function UI.Init()
     title.BackgroundTransparency = 1
     
     local toggleBtn = Instance.new("TextButton", frame)
-    toggleBtn.Size = UDim2.new(0, 200, 0, 50)
-    toggleBtn.Position = UDim2.new(0.5, -100, 0.5, -25)
+    toggleBtn.Size = UDim2.new(0, 200, 0, 40)
+    toggleBtn.Position = UDim2.new(0.5, -100, 0.5, -40)
     toggleBtn.Text = "Toggle Auto Rank"
+
+    local debugBtn = Instance.new("TextButton", frame)
+    debugBtn.Size = UDim2.new(0, 200, 0, 40)
+    debugBtn.Position = UDim2.new(0.5, -100, 0.5, 10)
+    debugBtn.Text = "Run Sniffer (F9)"
     
     local active = false
     toggleBtn.MouseButton1Click:Connect(function()
@@ -41,6 +46,12 @@ function UI.Init()
                     shared._PS99.Features.QuestManager.CheckRankUp()
                 end
             end)
+        end
+    end)
+
+    debugBtn.MouseButton1Click:Connect(function()
+        if shared._PS99.Debug and shared._PS99.Debug.Sniffer then
+            shared._PS99.Debug.Sniffer.Init()
         end
     end)
 end
