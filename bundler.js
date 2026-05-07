@@ -3,10 +3,12 @@ import fs from 'fs';
 const files = [
     'src/core/utils.lua',
     'src/core/value_extractor.lua',
+    'src/core/schema_mapper.lua',
     'src/fixtures/sample_savedata.lua',
     'src/core/savedata.lua',
     'src/debug/sniffer.lua',
     'src/features/quest_manager.lua',
+    'src/features/rank_planner.lua',
     'src/features/farming.lua',
     'src/ui/window.lua'
 ];
