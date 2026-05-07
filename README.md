@@ -5,6 +5,8 @@ This workspace copy focuses on value parsing from explicit Lua tables and local 
 ## What changed
 
 - Added `src/core/value_extractor.lua` to normalize rank, stars, max zone, and goals.
+- Added `src/core/schema_mapper.lua` to list candidate rank/goal paths from explicit tables.
+- Added `src/features/rank_planner.lua` to summarize rank-up readiness from normalized values.
 - Added `src/fixtures/sample_savedata.lua` for local parser development.
 - Reworked `src/core/savedata.lua` to expose normalized values.
 - Reworked `src/debug/sniffer.lua` into a safe parser/diagnostics module.
