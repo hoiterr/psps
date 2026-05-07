@@ -17,6 +17,7 @@ print("[PS99 Loader] Fetching modules from " .. REPO_URL)
 -- Load Core
 shared._PS99.Core.Utils = loadModule("/src/core/utils.lua")
 shared._PS99.Core.Network = loadModule("/src/core/network.lua")
+shared._PS99.Core.ValueExtractor = loadModule("/src/core/value_extractor.lua")
 shared._PS99.Core.SaveData = loadModule("/src/core/savedata.lua")
 
 -- Load Debug
@@ -31,13 +32,7 @@ shared._PS99.UI = loadModule("/src/ui/window.lua")
 
 -- Autostart UI
 if shared._PS99.UI and shared._PS99.UI.Init then
-    shared._PS99.UI.Init
-
--- Add this after the other loads in loader.lua
--- Sniffer is already loaded, but also try direct require
-shared._PS99.FullScan = function()
-    return shared._PS99.Debug.Sniffer.FullScan()
-
+    shared._PS99.UI.Init()
 end
 
 print("[PS99 Loader] Loaded successfully!")
