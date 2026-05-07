@@ -11,9 +11,9 @@ function UI.Log(msg)
     local lbl = Instance.new("TextLabel")
     lbl.Name = "LogMsg_" .. UI.LogCounter
     lbl.Size = UDim2.new(1, -10, 0, 0)
-    lbl.AutomaticSize = Enum.AutomaticSize.Y
     lbl.BackgroundTransparency = 1
-    lbl.Text = " " .. tostring(msg)
+    local text = " " .. tostring(msg)
+    lbl.Text = text
     lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.TextYAlignment = Enum.TextYAlignment.Top
@@ -22,6 +22,10 @@ function UI.Log(msg)
     lbl.TextWrapped = true
     lbl.LayoutOrder = UI.LogCounter
     lbl.Parent = UI.LogScroll
+    
+    -- Mobile executor safe auto-size
+    local bounds = game:GetService("TextService"):GetTextSize(text, 12, Enum.Font.Code, Vector2.new(380, 10000))
+    lbl.Size = UDim2.new(1, -10, 0, bounds.Y + 4)
     
     task.spawn(function()
         task.wait(0.05)
