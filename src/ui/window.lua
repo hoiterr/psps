@@ -116,7 +116,7 @@ function UI.Init()
 
     local planBtn = makeButton(
         frame,
-        "Quest Plan",
+        "Rank Plan",
         UDim2.new(0, 10, 0, 96),
         UDim2.new(1, -20, 0, 32),
         Color3.fromRGB(120, 90, 40)
@@ -146,9 +146,9 @@ function UI.Init()
     end)
 
     planBtn.MouseButton1Click:Connect(function()
-        if shared._PS99.Features and shared._PS99.Features.QuestManager then
-            UI.Log("======== [QUEST PLAN] ========")
-            for line in shared._PS99.Features.QuestManager.FormatQuestPlan():gmatch("([^\n]+)") do
+        if shared._PS99.Features and shared._PS99.Features.RankPlanner then
+            UI.Log("======== [RANK PLAN] ========")
+            for line in shared._PS99.Features.RankPlanner.FormatPlan():gmatch("([^\n]+)") do
                 UI.Log(line)
             end
         end
