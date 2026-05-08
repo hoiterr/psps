@@ -21,13 +21,6 @@ local NetworkFolder = ReplicatedStorage:WaitForChild("Network", 5)
 
 -- A robust function to fire any remote safely
 function Network.Fire(remoteName, ...)
-    local m = Network.GetModule()
-    if m and m.Fire then
-        return m.Fire(remoteName, ...)
-    elseif m and m.Invoke then
-        return m.Invoke(remoteName, ...)
-    end
-
     if not NetworkFolder then return false end
     
     local remote = NetworkFolder:FindFirstChild(remoteName)
@@ -47,6 +40,29 @@ function Network.Fire(remoteName, ...)
             return result
         else
             warn("[Network] Error invoking " .. remoteName .. ":", result)
+            return nil
+        end
+    end
+    return false
+end
+
+-- A robust function to invoke any remote safely
+function Network.Invoke(remoteName, ...)
+    if not NetworkFolder then return false end
+    
+    local remote = NetworkFolder:FindFirstChild(remoteName)
+    if not remote then 
+        return false 
+    end
+    
+    if remote:IsA("RemoteFunction") then
+        local success, result = pcall(function(...) 
+            return remote:InvokeServer(...) 
+        end, ...)
+        
+        if success then
+            return result
+        else
             return nil
         end
     end
