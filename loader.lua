@@ -17,7 +17,6 @@ print("[PS99 Loader] Fetching modules from " .. REPO_URL)
 -- Load Core
 shared._PS99.Core.Utils = loadModule("/src/core/utils.lua")
 shared._PS99.Core.Network = loadModule("/src/core/network.lua")
-shared._PS99.Core.ValueExtractor = loadModule("/src/core/value_extractor.lua")
 shared._PS99.Core.SaveData = loadModule("/src/core/savedata.lua")
 
 -- Load Debug

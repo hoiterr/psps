@@ -114,9 +114,18 @@ function UI.Init()
     copyBtn.Font = Enum.Font.GothamBold
     Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 4)
     
+    local goalsBtn = Instance.new("TextButton", frame)
+    goalsBtn.Size = UDim2.new(1, -20, 0, 30)
+    goalsBtn.Position = UDim2.new(0, 10, 0, 140)
+    goalsBtn.Text = "Dump Goal Types (For AutoRank)"
+    goalsBtn.BackgroundColor3 = Color3.fromRGB(180, 140, 40)
+    goalsBtn.TextColor3 = Color3.new(1, 1, 1)
+    goalsBtn.Font = Enum.Font.GothamBold
+    Instance.new("UICorner", goalsBtn).CornerRadius = UDim.new(0, 4)
+    
     UI.LogScroll = Instance.new("ScrollingFrame", frame)
-    UI.LogScroll.Size = UDim2.new(1, -20, 1, -150)
-    UI.LogScroll.Position = UDim2.new(0, 10, 0, 140)
+    UI.LogScroll.Size = UDim2.new(1, -20, 1, -190)
+    UI.LogScroll.Position = UDim2.new(0, 10, 0, 180)
     UI.LogScroll.BackgroundColor3 = Color3.fromRGB(12, 14, 18)
     UI.LogScroll.ScrollBarThickness = 4
     UI.LogScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -135,16 +144,10 @@ function UI.Init()
             UI.Log("Started AutoRank loop...")
             task.spawn(function()
                 while active and task.wait(1) do
-                    pcall(function()
-                        if shared._PS99.Features and shared._PS99.Features.QuestManager then
-                            if shared._PS99.Features.QuestManager.AutoCompleteQuests then
-                                shared._PS99.Features.QuestManager.AutoCompleteQuests()
-                            end
-                            if shared._PS99.Features.QuestManager.CheckRankUp then
-                                shared._PS99.Features.QuestManager.CheckRankUp()
-                            end
-                        end
-                    end)
+                    if shared._PS99.Features and shared._PS99.Features.QuestManager then
+                        shared._PS99.Features.QuestManager.AutoCompleteQuests()
+                        shared._PS99.Features.QuestManager.CheckRankUp()
+                    end
                 end
             end)
         else
@@ -154,49 +157,35 @@ function UI.Init()
 
     debugBtn.MouseButton1Click:Connect(function()
         if shared._PS99.Debug and shared._PS99.Debug.Sniffer then
-            shared._PS99.Debug.Sniffer.FullScan()
-        else
-            UI.Log("Sniffer not loaded!")
+            shared._PS99.Debug.Sniffer.DumpSaveData()
         end
     end)
 
     spyBtn.MouseButton1Click:Connect(function()
-        pcall(function()
-            UI.Log("=== Remote Spy ===")
-            local found = 0
-            for _, obj in pairs(getgc(true)) do
-                if type(obj) == "table" then
-                    for k, v in pairs(obj) do
-                        if typeof(v) == "RemoteEvent" or typeof(v) == "RemoteFunction" or typeof(v) == "UnreliableRemoteEvent" then
-                            found = found + 1
-                            UI.Log("  [" .. tostring(k) .. "] -> " .. v.ClassName .. " : " .. v.Parent:GetFullName())
-                        end
-                    end
-                end
-            end
-            -- Also scan ReplicatedStorage directly
-            local rs = game:GetService("ReplicatedStorage")
-            for _, remote in ipairs(rs:GetDescendants()) do
-                if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
-                    found = found + 1
-                    UI.Log("  " .. remote.ClassName .. " : " .. remote:GetFullName())
-                end
-            end
-            UI.Log("Found " .. found .. " remotes total")
-        end)
+        if shared._PS99.Debug and shared._PS99.Debug.Sniffer then
+            shared._PS99.Debug.Sniffer.SpyNetwork()
+        end
+    end)
+
+    goalsBtn.MouseButton1Click:Connect(function()
+        if shared._PS99.Debug and shared._PS99.Debug.Sniffer then
+            shared._PS99.Debug.Sniffer.DumpGoalsTypes()
+        end
     end)
 
     copyBtn.MouseButton1Click:Connect(function()
-        pcall(function()
-            local text = UI.AllLogsText
-            if syn and syn.clipboard then syn.clipboard.set(text)
-            elseif clipboard and clipboard.set then clipboard.set(text)
-            elseif setclipboard then setclipboard(text)
-            elseif toclipboard then toclipboard(text)
-            elseif writeclipboard then writeclipboard(text)
-            else error("no clipboard method") end
-            UI.Log("Logs copied to clipboard!")
+        local success = pcall(function()
+            if setclipboard then
+                setclipboard(UI.AllLogsText)
+                UI.Log("Logs copied to clipboard!")
+            elseif toclipboard then
+                toclipboard(UI.AllLogsText)
+                UI.Log("Logs copied to clipboard!")
+            else
+                UI.Log("Executor does not support clipboard copying.")
+            end
         end)
+        if not success then UI.Log("Failed to copy logs.") end
     end)
     
     UI.Log("UI Initialized. Ready to sniff data!")

@@ -172,6 +172,31 @@ local function cout(msg)
     end
 end
 
+function Sniffer.DumpGoalsTypes()
+    cout("======== [DUMPING GOAL CONFIGS] ========")
+    local m = game:GetService("ReplicatedStorage"):FindFirstChild("Goals", true)
+    
+    local found = false
+    -- Usually ReplicatedStorage.Library.Types.Goals
+    for _, v in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+        if v:IsA("ModuleScript") and v.Name == "Goals" then
+            local success, data = pcall(require, v)
+            if success and type(data) == "table" then
+                found = true
+                for k, goalConfig in pairs(data) do
+                    local typeStr = tostring(goalConfig.Type)
+                    if not goalConfig.Type and goalConfig.Name then typeStr = tostring(goalConfig.Name) end
+                    cout(string.format("[%s] -> %s", tostring(k), typeStr))
+                end
+                break
+            end
+        end
+    end
+    
+    if not found then cout("Failed to require Goals config module!") end
+    cout("========================================")
+end
+
 function Sniffer.DumpSaveData()
     cout("======== [PS99 SAVE UNPACKED] ========")
     
@@ -294,32 +319,28 @@ function Sniffer.SpyNetwork()
 
     cout("[Sniffer] Scanning ReplicatedStorage for Network/Save modules...")
 
-    -- Blacklist extremely spammy remotes to not lag mobile devices
     local Blacklist = {
         ["PlayerPing"] = true,
-        ["Breakables_PlayerMineUpdate"] = true,
-        ["Pets_SetTarget"] = true,
         ["Hoverboards_Move"] = true,
-        ["PerformAction"] = true,
-        ["Breakables_MineUpdate"] = true,
-        ["Breakables_PlayerInstaMine"] = true
+        ["World_PlayerMoved"] = true,
+        ["State_Update"] = true
     }
 
-    local foundNet = false
     pcall(function()
         for _, v in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
             if v:IsA("ModuleScript") and v.Name == "Network" then
                 local success, m = pcall(require, v)
                 if success and type(m) == "table" and (m.Fire or m.Invoke) then
                     cout("-> Hooked Network Module at: " .. v:GetFullName())
-                    foundNet = true
                     if m.Fire then
                         local oldF = m.Fire
                         m.Fire = function(...)
                             local args = {...}
                             local name = tostring(args[1])
                             if not Blacklist[name] then
-                                task.spawn(function() cout("[Net.Fire] " .. name .. " | arg#: " .. tostring(#args - 1)) end)
+                                local tStr = ""
+                                for i=2, math.min(#args, 4) do tStr = tStr .. type(args[i]) .. ", " end
+                                task.spawn(function() cout("[Net.F] " .. name .. " | " .. tStr) end)
                             end
                             return oldF(...)
                         end
@@ -330,7 +351,9 @@ function Sniffer.SpyNetwork()
                             local args = {...}
                             local name = tostring(args[1])
                             if not Blacklist[name] then
-                                task.spawn(function() cout("[Net.Invoke] " .. name .. " | arg#: " .. tostring(#args - 1)) end)
+                                local tStr = ""
+                                for i=2, math.min(#args, 4) do tStr = tStr .. type(args[i]) .. ", " end
+                                task.spawn(function() cout("[Net.I] " .. name .. " | " .. tStr) end)
                             end
                             return oldI(...)
                         end
@@ -341,28 +364,33 @@ function Sniffer.SpyNetwork()
         end
     end)
 
-    if not foundNet then
-        cout("[Sniffer] Failed to hook module. Hooking __namecall as fallback...")
-        if not hookmetamethod then return end
-        local oldNamecall
-        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-            local method = getnamecallmethod()
-            if method == "FireServer" or method == "InvokeServer" then
-                if typeof(self) == "Instance" and not Blacklist[self.Name] then
+    cout("[Sniffer] Hooking __namecall as fallback/global grab...")
+    if not hookmetamethod then 
+        cout("[Sniffer] hookmetamethod missing!")
+        return 
+    end
+    
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = getnamecallmethod()
+        if type(method) == "string" then
+            local m = method:lower()
+            if m == "fireserver" or m == "invokeserver" then
+                if typeof(self) == "Instance" and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction") or self:IsA("UnreliableRemoteEvent")) and not Blacklist[self.Name] then
                     local args = {...}
-                    local strArgs = ""
-                    for i, v in ipairs(args) do
-                        if type(v) == "table" then strArgs = strArgs .. "[table], " else strArgs = strArgs .. tostring(v) .. ", " end
+                    local tStr = ""
+                    for i=1, math.min(#args, 5) do 
+                        if type(args[i]) == "table" then tStr = tStr .. "[table], " else tStr = tStr .. tostring(args[i]) .. ", " end
                     end
                     local name = tostring(self.Name)
                     task.spawn(function()
-                        cout(string.format("[Spy] %s | %s", name, strArgs))
+                        cout("[Spy NC] " .. name .. " | " .. tStr)
                     end)
                 end
             end
-            return oldNamecall(self, ...)
-        end)
-    end
+        end
+        return oldNamecall(self, ...)
+    end)
 end
 
 
@@ -375,60 +403,43 @@ local QuestManager = {}
 local Network = shared._PS99.Core.Network
 local SaveData = shared._PS99.Core.SaveData
 
+local UI = shared._PS99.UI
+
 -- This feature will handle parsing goals and automating them
 function QuestManager.GetActiveQuests()
-    -- Big Games stores active goals in SaveData.Goals
-    -- They usually look like: [{ Type = "BreakBreakables", Amount = 100, Progress = 25 }]
     return SaveData.GetGoals()
 end
 
 function QuestManager.AutoCompleteQuests()
     local activeQuests = QuestManager.GetActiveQuests()
     for id, questData in pairs(activeQuests) do
-        -- Check what type of quest it is
         local qType = questData.Type
         local progress = questData.Progress or 0
-        local amountNeeded = questData.Amount or 1
+        local amountNeeded = questData.Amount or questData.Goal or 1
         
         if progress < amountNeeded then
             QuestManager.DispatchQuestAction(qType, questData)
-        else
-            -- Might be ready to claim or just completed automatically
-            -- Claim remote can vary, e.g., "Goals_Claim"
-            Network.Fire("Goals_Claim", id)
         end
     end
 end
 
 -- Route different quest types to their respective actions
 function QuestManager.DispatchQuestAction(questType, questData)
-    print("[AutoRank] Handling Quest:", questType)
-    
-    if questType == "BreakBreakables" then
-        -- Teleport to highest area and break coins
-        
-    elseif questType == "HatchPets" then
-        -- Go to best egg and hatch it
-        
-    elseif questType == "CollectDiamonds" then
-        -- Break diamond breakables
-        
-    elseif questType == "UsePotions" then
-        -- Pop low tier potions based on required amount
-        
-    elseif questType == "UpgradeEnchants" then
-        -- Go to enchant machine
-        
-    else
-        warn("[AutoRank] Unhandled Quest Type:", questType)
-    end
+    -- We now know questType is an integer (e.g. 14, 40, 42, 44)
+    -- Until we map these IDs to actual actions, we just log them if UI exists
 end
 
 -- Rank Up Logic
 function QuestManager.CheckRankUp()
-    -- Call the Rank Up remote if stars are maxed out for current rank
-    -- Note: you need to find the exact remote for this, typically "Rank_Up"
-    Network.Fire("Rank_Up")
+    -- Attempt to claim any pending rank rewards (1 to 100 is safe range to attempt)
+    -- If it fails, nothing bad happens usually.
+    for i = 1, 99 do
+        -- Typically PS99 rewards are claimed per index
+        -- Network.Fire("Ranks_ClaimReward", i)
+    end
+    
+    -- Attempt rank up
+    Network.Fire("Ranks_RankUp")
 end
 
 
@@ -592,9 +603,18 @@ function UI.Init()
     copyBtn.Font = Enum.Font.GothamBold
     Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 4)
     
+    local goalsBtn = Instance.new("TextButton", frame)
+    goalsBtn.Size = UDim2.new(1, -20, 0, 30)
+    goalsBtn.Position = UDim2.new(0, 10, 0, 140)
+    goalsBtn.Text = "Dump Goal Types (For AutoRank)"
+    goalsBtn.BackgroundColor3 = Color3.fromRGB(180, 140, 40)
+    goalsBtn.TextColor3 = Color3.new(1, 1, 1)
+    goalsBtn.Font = Enum.Font.GothamBold
+    Instance.new("UICorner", goalsBtn).CornerRadius = UDim.new(0, 4)
+    
     UI.LogScroll = Instance.new("ScrollingFrame", frame)
-    UI.LogScroll.Size = UDim2.new(1, -20, 1, -150)
-    UI.LogScroll.Position = UDim2.new(0, 10, 0, 140)
+    UI.LogScroll.Size = UDim2.new(1, -20, 1, -190)
+    UI.LogScroll.Position = UDim2.new(0, 10, 0, 180)
     UI.LogScroll.BackgroundColor3 = Color3.fromRGB(12, 14, 18)
     UI.LogScroll.ScrollBarThickness = 4
     UI.LogScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -633,6 +653,12 @@ function UI.Init()
     spyBtn.MouseButton1Click:Connect(function()
         if shared._PS99.Debug and shared._PS99.Debug.Sniffer then
             shared._PS99.Debug.Sniffer.SpyNetwork()
+        end
+    end)
+
+    goalsBtn.MouseButton1Click:Connect(function()
+        if shared._PS99.Debug and shared._PS99.Debug.Sniffer then
+            shared._PS99.Debug.Sniffer.DumpGoalsTypes()
         end
     end)
 
