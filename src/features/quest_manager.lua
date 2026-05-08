@@ -33,11 +33,11 @@ function QuestManager.CheckRankUp()
     -- Attempt to claim any pending rank rewards (1 to 100 is safe range to attempt)
     -- If it fails, nothing bad happens usually.
     for i = 1, 99 do
-        -- Typically PS99 rewards are claimed per index
-        -- Network.Fire("Ranks_ClaimReward", i)
+        -- Our extracted remote is exactly "Ranks_ClaimReward"
+        Network.Fire("Ranks_ClaimReward", i)
     end
     
-    -- Attempt rank up
+    -- Attempt rank up using the exact remote "Ranks_RankUp"
     Network.Fire("Ranks_RankUp")
 end
 
